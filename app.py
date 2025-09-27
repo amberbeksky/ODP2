@@ -67,9 +67,15 @@ def init_db():
                     contract_number TEXT,
                     ippcu_start TEXT,
                     ippcu_end TEXT,
-                    group_name TEXT,
-                    UNIQUE(lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
+                    group_name TEXT
                 )
+                """
+            )
+            # создаём индекс для проверки дублей
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique
+                ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
                 """
             )
             conn.commit()
@@ -90,8 +96,7 @@ def init_db():
                     contract_number TEXT,
                     ippcu_start TEXT,
                     ippcu_end TEXT,
-                    group_name TEXT,
-                    UNIQUE(lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
+                    group_name TEXT
                 )
                 """
             )
@@ -101,19 +106,17 @@ def init_db():
             for r in rows:
                 _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
                 last, first, middle = split_fio(fio or "")
-                # Для переносимых строк, если dob пуст — ставим '' (требуем dob NOT NULL, но чтобы не упало)
                 dob_val = dob or ""
                 try:
                     cur.execute(
                         """
                         INSERT OR IGNORE INTO clients_new
-                        (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (None, last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                        (last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
                     )
                 except Exception:
-                    # если какие-то данные некорректны — вставим минимально
                     cur.execute(
                         "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
                         (last or "", first or "", middle or "", dob_val)
@@ -121,33 +124,27 @@ def init_db():
             # удаляем старую таблицу и переименовываем новую
             cur.execute("DROP TABLE clients")
             cur.execute("ALTER TABLE clients_new RENAME TO clients")
+            # добавляем индекс
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique
+                ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
+                """
+            )
             conn.commit()
             return
 
-        # если уже новая схема — ничего не делаем
+        # если уже новая схема — просто убеждаемся, что индекс есть
         if "last_name" in cols and "dob" in cols:
-            # убедимся, что UNIQUE индекс существует (на случай более старых версий)
-            try:
-                cur.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)"
-                )
-            except Exception:
-                pass
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique
+                ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
+                """
+            )
             conn.commit()
             return
 
-        # В иных случаях — попытка создать недостающие колонки (на всякий случай)
-        # (этот блок — запасной; чаще всего не нужен)
-        try:
-            if "last_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
-            if "first_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN first_name TEXT")
-            if "middle_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
-            conn.commit()
-        except Exception:
-            pass
 
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
