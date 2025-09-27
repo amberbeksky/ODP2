@@ -29,7 +29,13 @@ jobs:
 
     - name: Build exe
       run: |
-        pyinstaller --onefile --windowed app.py
+        pyinstaller --onefile --windowed app.py ^
+          --hidden-import pandas._libs.tslibs.np_datetime ^
+          --hidden-import pandas._libs.tslibs.nattype ^
+          --hidden-import pandas._libs.skiplist ^
+          --hidden-import matplotlib.backends.backend_tkagg ^
+          --hidden-import matplotlib.backends.backend_agg ^
+          --hidden-import tkcalendar
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
