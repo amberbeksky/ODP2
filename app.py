@@ -214,63 +214,69 @@ def refresh_tree(results=None):
         tree.insert("", "end", text=str(r[0]), values=values, tags=(tag,))
 
 def add_window():
-    def save():
-        fio_val = e_fio.get().strip()
-        if not fio_val:
-            messagebox.showerror("Ошибка", "Введите ФИО")
-            return
-        try:
-            dob_val = normalize_date_for_db(e_dob.get())
-            ippcu_start_val = normalize_date_for_db(e_ippcu_start.get())
-            ippcu_end_val = normalize_date_for_db(e_ippcu_end.get())
-            phone_val = e_phone.get().strip()
-            contract_val = e_contract.get().strip()
-            group_val = e_group.get().strip()
-
-            client_id = add_client(
-                fio_val, dob_val, phone_val, contract_val, ippcu_start_val, ippcu_end_val, group_val
-            )
-            messagebox.showinfo("Успех", "Обслуживаемый добавлен!")
-            status_var.set(f"Добавлен ID {client_id}")
-            win.destroy()
-            refresh_tree()
-        except Exception as e:
-            traceback.print_exc()
-            messagebox.showerror("Ошибка", f"Не удалось добавить:\n{e}")
-
-    win = tk.Toplevel(root)
+    win = tk.Toplevel()
     win.title("Добавить обслуживаемого")
-    win.configure(bg="#f5f5f7")
 
-    tk.Label(win, text="ФИО", bg="#f5f5f7").grid(row=0, column=0, padx=10, pady=5, sticky="w")
-    e_fio = tk.Entry(win, width=40)
+    # ФИО
+    tk.Label(win, text="ФИО").grid(row=0, column=0, padx=10, pady=5, sticky="w")
+    e_fio = tk.Entry(win, width=30)
     e_fio.grid(row=0, column=1, padx=10, pady=5)
 
-    tk.Label(win, text="Дата рождения", bg="#f5f5f7").grid(row=1, column=0, padx=10, pady=5, sticky="w")
-    e_dob = DateEntry(win, width=37, background='darkblue', foreground='white', date_pattern='yyyy-mm-dd')
+    # Дата рождения
+    tk.Label(win, text="Дата рождения").grid(row=1, column=0, padx=10, pady=5, sticky="w")
+    e_dob = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
     e_dob.grid(row=1, column=1, padx=10, pady=5)
 
-    tk.Label(win, text="Телефон", bg="#f5f5f7").grid(row=2, column=0, padx=10, pady=5, sticky="w")
-    e_phone = tk.Entry(win, width=40)
+    # Телефон
+    tk.Label(win, text="Телефон").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+    e_phone = tk.Entry(win, width=30)
     e_phone.grid(row=2, column=1, padx=10, pady=5)
 
-    tk.Label(win, text="Номер договора", bg="#f5f5f7").grid(row=3, column=0, padx=10, pady=5, sticky="w")
-    e_contract = tk.Entry(win, width=40)
+    # Номер договора
+    tk.Label(win, text="Номер договора").grid(row=3, column=0, padx=10, pady=5, sticky="w")
+    e_contract = tk.Entry(win, width=30)
     e_contract.grid(row=3, column=1, padx=10, pady=5)
 
-    tk.Label(win, text="Дата начала ИППСУ", bg="#f5f5f7").grid(row=4, column=0, padx=10, pady=5, sticky="w")
-    e_ippcu_start = DateEntry(win, width=37, background='darkblue', foreground='white', date_pattern='yyyy-mm-dd')
+    # Дата начала ИППСУ
+    tk.Label(win, text="Дата начала ИППСУ").grid(row=4, column=0, padx=10, pady=5, sticky="w")
+    e_ippcu_start = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
     e_ippcu_start.grid(row=4, column=1, padx=10, pady=5)
 
-    tk.Label(win, text="Дата окончания ИППСУ", bg="#f5f5f7").grid(row=5, column=0, padx=10, pady=5, sticky="w")
-    e_ippcu_end = DateEntry(win, width=37, background='darkblue', foreground='white', date_pattern='yyyy-mm-dd')
+    # Дата окончания ИППСУ
+    tk.Label(win, text="Дата окончания ИППСУ").grid(row=5, column=0, padx=10, pady=5, sticky="w")
+    e_ippcu_end = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
     e_ippcu_end.grid(row=5, column=1, padx=10, pady=5)
 
-    tk.Label(win, text="Группа", bg="#f5f5f7").grid(row=6, column=0, padx=10, pady=5, sticky="w")
-    e_group = tk.Entry(win, width=40)
+    # Группа
+    tk.Label(win, text="Группа").grid(row=6, column=0, padx=10, pady=5, sticky="w")
+    e_group = tk.Entry(win, width=30)
     e_group.grid(row=6, column=1, padx=10, pady=5)
 
-    tk.Button(win, text="Сохранить", command=save, bg="#007aff", fg="#ffffff").grid(row=7, columnspan=2, pady=10)
+    # Сохранить
+    def save_client():
+        fio = e_fio.get().strip()
+        dob = e_dob.get_date().strftime("%d.%m.%Y")
+        phone = e_phone.get().strip()
+        contract = e_contract.get().strip()
+        ippcu_start = e_ippcu_start.get_date().strftime("%d.%m.%Y")
+        ippcu_end = e_ippcu_end.get_date().strftime("%d.%m.%Y")
+        group = e_group.get().strip()
+
+        if not fio:
+            messagebox.showerror("Ошибка", "Поле 'ФИО' обязательно для заполнения!")
+            return
+
+        c.execute(
+            "INSERT INTO clients (fio, dob, phone, contract, ippcu_start, ippcu_end, group_name) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (fio, dob, phone, contract, ippcu_start, ippcu_end, group)
+        )
+        conn.commit()
+        refresh_clients()
+        win.destroy()
+
+    tk.Button(win, text="Сохранить", command=save_client).grid(row=7, column=0, columnspan=2, pady=10)
+
 
 def edit_client(event=None):
     selected = tree.selection()
