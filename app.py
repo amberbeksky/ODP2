@@ -3,8 +3,14 @@ from tkinter import ttk, messagebox, filedialog
 import sqlite3
 import traceback
 from tkcalendar import DateEntry
+from datetime import datetime, timedelta
+
+# ====== для Google Sheets ======
+import gspread
+from google.oauth2.service_account import Credentials
 
 DB_NAME = "clients.db"
+SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
 
 # ================== База данных ==================
 def init_db():
@@ -55,21 +61,30 @@ def get_all_clients(limit=200):
         return cur.fetchall()
 
 
-def search_clients(query="", limit=200):
+def search_clients(query="", date_from=None, date_to=None, limit=200):
     with sqlite3.connect(DB_NAME) as conn:
         cur = conn.cursor()
         like = f"%{query}%"
-        cur.execute(
-            """
+
+        sql = """
             SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name
             FROM clients
-            WHERE fio LIKE ? OR contract_number LIKE ? OR phone LIKE ? 
-                  OR ippcu_start LIKE ? OR ippcu_end LIKE ? OR group_name LIKE ?
-            ORDER BY fio
-            LIMIT ?
-            """,
-            (like, like, like, like, like, like, limit),
-        )
+            WHERE (fio LIKE ? OR contract_number LIKE ? OR phone LIKE ? 
+                   OR ippcu_start LIKE ? OR ippcu_end LIKE ? OR group_name LIKE ?)
+        """
+        params = [like, like, like, like, like, like]
+
+        if date_from:
+            sql += " AND DATE(ippcu_end) >= DATE(?) "
+            params.append(date_from)
+        if date_to:
+            sql += " AND DATE(ippcu_end) <= DATE(?) "
+            params.append(date_to)
+
+        sql += " ORDER BY fio LIMIT ?"
+        params.append(limit)
+
+        cur.execute(sql, params)
         return cur.fetchall()
 
 
@@ -94,6 +109,37 @@ def delete_client(cid):
         conn.commit()
 
 
+# ================== Google Sheets ==================
+def get_gsheet(sheet_id, sheet_name="Лист1"):
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
+    return sheet
+
+
+def import_from_gsheet():
+    try:
+        sheet = get_gsheet(SHEET_ID)
+        data = sheet.get_all_records()
+
+        for row in data:
+            add_client(
+                row.get("ФИО", ""),
+                row.get("Дата рождения", ""),
+                row.get("Телефон", ""),
+                row.get("Номер договора", ""),
+                row.get("Дата начала ИППСУ", ""),
+                row.get("Дата окончания ИППСУ", ""),
+                row.get("Группа", ""),
+            )
+        refresh_tree()
+        messagebox.showinfo("Успех", "Импорт из Google Sheets завершён!")
+    except Exception as e:
+        traceback.print_exc()
+        messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
+
+
 # ================== UI ==================
 def refresh_tree(results=None):
     for row in tree.get_children():
@@ -102,15 +148,32 @@ def refresh_tree(results=None):
     if results is None:
         results = get_all_clients(limit=200)
 
+    today = datetime.today().date()
+    soon = today + timedelta(days=30)
+
     for row in results:
-        tree.insert("", "end", values=row)
+        cid, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group = row
+
+        tag = ""
+        try:
+            if ippcu_end:
+                end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
+                if end_date < today:
+                    tag = "expired"
+                elif today <= end_date <= soon:
+                    tag = "soon"
+                else:
+                    tag = "active"
+        except:
+            pass
+
+        tree.insert("", "end", values=row, tags=(tag,))
 
 
 def add_window():
     win = tk.Toplevel()
     win.title("Добавить обслуживаемого")
 
-    # ===== Поля ввода =====
     tk.Label(win, text="ФИО").grid(row=0, column=0, padx=10, pady=5, sticky="w")
     e_fio = tk.Entry(win, width=30)
     e_fio.grid(row=0, column=1, padx=10, pady=5)
@@ -139,7 +202,6 @@ def add_window():
     e_group = tk.Entry(win, width=30)
     e_group.grid(row=6, column=1, padx=10, pady=5)
 
-    # ===== Сохранение =====
     def save_client():
         fio = e_fio.get().strip()
         dob = e_dob.get_date().strftime("%Y-%m-%d")
@@ -176,7 +238,6 @@ def edit_client():
     win = tk.Toplevel()
     win.title("Редактировать обслуживаемого")
 
-    # Форма
     tk.Label(win, text="ФИО").grid(row=0, column=0, padx=10, pady=5, sticky="w")
     e_fio = tk.Entry(win, width=30)
     e_fio.insert(0, fio)
@@ -185,7 +246,6 @@ def edit_client():
     tk.Label(win, text="Дата рождения").grid(row=1, column=0, padx=10, pady=5, sticky="w")
     e_dob = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
     try:
-        from datetime import datetime
         e_dob.set_date(datetime.strptime(dob, "%Y-%m-%d"))
     except:
         pass
@@ -222,7 +282,6 @@ def edit_client():
     e_group.insert(0, group)
     e_group.grid(row=6, column=1, padx=10, pady=5)
 
-    # Сохранение
     def save_edit():
         new_fio = e_fio.get().strip()
         new_dob = e_dob.get_date().strftime("%Y-%m-%d")
@@ -262,94 +321,53 @@ def delete_selected():
 
 def do_search():
     query = search_entry.get().strip()
-    results = search_clients(query=query, limit=200)
+    date_from = date_from_entry.get_date().strftime("%Y-%m-%d") if date_from_entry.get() else None
+    date_to = date_to_entry.get_date().strftime("%Y-%m-%d") if date_to_entry.get() else None
+
+    results = search_clients(query=query, date_from=date_from, date_to=date_to, limit=200)
     refresh_tree(results)
-
-
-def import_excel():
-    import pandas as pd
-    path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
-    if not path:
-        return
-    try:
-        df = pd.read_excel(path)
-        for _, row in df.iterrows():
-            add_client(
-                row.get("ФИО", ""),
-                row.get("Дата рождения", ""),
-                row.get("Телефон", ""),
-                row.get("Номер договора", ""),
-                row.get("Дата начала ИППСУ", ""),
-                row.get("Дата окончания ИППСУ", ""),
-                row.get("Группа", ""),
-            )
-        refresh_tree()
-    except Exception as e:
-        traceback.print_exc()
-        messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
-
-
-def export_excel():
-    import pandas as pd
-    path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
-    if not path:
-        return
-    try:
-        rows = get_all_clients(limit=1000000)  # выгружаем всех
-        df = pd.DataFrame(rows, columns=["ID", "ФИО", "Дата рождения", "Телефон",
-                                         "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"])
-        df.to_excel(path, index=False)
-    except Exception as e:
-        traceback.print_exc()
-        messagebox.showerror("Ошибка", f"Не удалось экспортировать:\n{e}")
-
-
-def show_statistics():
-    import pandas as pd
-    import matplotlib
-    matplotlib.use("TkAgg")
-    import matplotlib.pyplot as plt
-
-    rows = get_all_clients(limit=1000000)
-    df = pd.DataFrame(rows, columns=["ID", "ФИО", "Дата рождения", "Телефон",
-                                     "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"])
-    if df.empty:
-        messagebox.showinfo("Статистика", "Нет данных")
-        return
-
-    counts = df["Группа"].value_counts()
-    counts.plot(kind="bar")
-    plt.title("Количество клиентов по группам")
-    plt.show()
 
 
 # ================== MAIN ==================
 root = tk.Tk()
 root.title("База клиентов")
 
+# Поиск + фильтры
 search_entry = tk.Entry(root, width=40)
-search_entry.grid(row=0, column=0, padx=5, pady=5)
+search_entry.grid(row=0, column=0, padx=5, pady=5, sticky="w")
 tk.Button(root, text="Поиск", command=do_search).grid(row=0, column=1, padx=5, pady=5)
 
+tk.Label(root, text="Дата окончания ИППСУ:").grid(row=0, column=2, padx=5)
+date_from_entry = DateEntry(root, width=12, date_pattern="dd.mm.yyyy")
+date_from_entry.grid(row=0, column=3, padx=5)
+date_to_entry = DateEntry(root, width=12, date_pattern="dd.mm.yyyy")
+date_to_entry.grid(row=0, column=4, padx=5)
+tk.Button(root, text="Фильтр", command=do_search).grid(row=0, column=5, padx=5)
+
+# Таблица
 tree = ttk.Treeview(root, columns=("ID", "ФИО", "Дата рождения", "Телефон",
                                    "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
                     show="headings", height=20)
-tree.grid(row=1, column=0, columnspan=6, padx=5, pady=5, sticky="nsew")
+tree.grid(row=1, column=0, columnspan=7, padx=5, pady=5, sticky="nsew")
 
 for col in tree["columns"]:
     tree.heading(col, text=col)
 
+# Настройка цветов
+tree.tag_configure("expired", background="#ffcccc")
+tree.tag_configure("soon", background="#fff2cc")
+tree.tag_configure("active", background="#ccffcc")
+
+# Кнопки
 tk.Button(root, text="Добавить", command=add_window).grid(row=2, column=0, padx=5, pady=5)
 tk.Button(root, text="Редактировать", command=edit_client).grid(row=2, column=1, padx=5, pady=5)
 tk.Button(root, text="Удалить", command=delete_selected).grid(row=2, column=2, padx=5, pady=5)
-tk.Button(root, text="Импорт Excel", command=import_excel).grid(row=2, column=3, padx=5, pady=5)
-tk.Button(root, text="Экспорт Excel", command=export_excel).grid(row=2, column=4, padx=5, pady=5)
-tk.Button(root, text="Статистика", command=show_statistics).grid(row=2, column=5, padx=5, pady=5)
+tk.Button(root, text="Импорт Google Sheets", command=import_from_gsheet).grid(row=2, column=3, padx=5, pady=5)
 
 root.grid_rowconfigure(1, weight=1)
 root.grid_columnconfigure(0, weight=1)
 
 init_db()
-root.after(200, refresh_tree)  # загружаем список чуть позже
+root.after(200, refresh_tree)
 
 root.mainloop()
