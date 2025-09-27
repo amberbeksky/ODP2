@@ -119,13 +119,24 @@ def get_gsheet(sheet_id, sheet_name="Лист1"):
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
-    if not creds_json:
-        raise RuntimeError("Секрет GOOGLE_CREDENTIALS не найден!")
 
-    creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
+    if creds_json:
+        # Если секрет передан через переменную окружения (GitHub Actions)
+        creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
+    else:
+        # Иначе пробуем загрузить credentials.json рядом с exe
+        exe_dir = os.path.dirname(os.path.abspath(__file__))
+        creds_path = os.path.join(exe_dir, "credentials.json")
+
+        if not os.path.exists(creds_path):
+            raise RuntimeError("Не найден GOOGLE_CREDENTIALS и нет файла credentials.json рядом с программой!")
+
+        creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
+
     client = gspread.authorize(creds)
     sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
     return sheet
+
 
 
 def import_from_gsheet():
