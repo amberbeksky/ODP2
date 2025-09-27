@@ -22,23 +22,25 @@ jobs:
         python-version: "3.11"
         architecture: ${{ matrix.arch }}
 
+    - name: Cache pip
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install numpy==1.26.4 pandas==1.5.3 matplotlib==3.7.2 tkcalendar==1.6.1 openpyxl==3.1.2 pillow==10.2.0 pyinstaller==6.6.0
+        pip install -r requirements.txt
 
     - name: Build exe
       run: |
-        pyinstaller --onefile --windowed app.py --collect-all pandas --collect-all matplotlib --collect-all tkcalendar --collect-all PIL --collect-all numpy --log-level=DEBUG > build-log.txt 2>&1
+        pyinstaller --onefile --windowed app.py --collect-all pandas --collect-all matplotlib --collect-all tkcalendar --collect-all PIL --collect-all numpy
 
     - name: Upload exe artifact
       uses: actions/upload-artifact@v4
       with:
         name: app-${{ matrix.arch }}
         path: dist/app.exe
-
-    - name: Upload build log
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-log-${{ matrix.arch }}
-        path: build-log.txt
