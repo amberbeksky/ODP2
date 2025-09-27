@@ -116,26 +116,32 @@ def delete_client(cid):
 
 # ================== Google Sheets ==================
 def get_gsheet(sheet_id, sheet_name="Лист1"):
+    import sys
+
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
+    # 1. Пробуем взять из переменной окружения (CI/CD)
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
-    if creds_json:
-        # Если секрет передан через переменную окружения (GitHub Actions)
-        creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
-    else:
-        # Иначе пробуем загрузить credentials.json рядом с exe
-        exe_dir = os.path.dirname(os.path.abspath(__file__))
-        creds_path = os.path.join(exe_dir, "credentials.json")
+    # 2. Если переменной нет – ищем файл рядом с exe/скриптом
+    if not creds_json:
+        if getattr(sys, 'frozen', False):  # если exe
+            exe_dir = os.path.dirname(sys.executable)
+        else:  # если скрипт
+            exe_dir = os.path.dirname(os.path.abspath(__file__))
 
+        creds_path = os.path.join(exe_dir, "credentials.json")
         if not os.path.exists(creds_path):
             raise RuntimeError("Не найден GOOGLE_CREDENTIALS и нет файла credentials.json рядом с программой!")
 
-        creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
+        with open(creds_path, "r", encoding="utf-8") as f:
+            creds_json = f.read()
 
+    creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
     return sheet
+
 
 
 
