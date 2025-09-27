@@ -37,7 +37,14 @@ jobs:
 
     - name: Build exe
       run: |
-        pyinstaller --onefile --windowed app.py --clean --collect-all pandas --collect-all matplotlib --collect-all tkcalendar --collect-all PIL --collect-all numpy --collect-all google
+        pyinstaller --onefile --windowed app.py --clean ^
+          --collect-all pandas ^
+          --collect-all matplotlib ^
+          --collect-all tkcalendar ^
+          --collect-all PIL ^
+          --collect-all numpy ^
+          --collect-all google ^
+          --collect-all babel
 
     - name: Remove credentials.json
       run: del credentials.json
