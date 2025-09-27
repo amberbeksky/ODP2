@@ -217,6 +217,7 @@ def add_window():
     win = tk.Toplevel()
     win.title("Добавить обслуживаемого")
 
+    # ===== Поля ввода =====
     # ФИО
     tk.Label(win, text="ФИО").grid(row=0, column=0, padx=10, pady=5, sticky="w")
     e_fio = tk.Entry(win, width=30)
@@ -252,30 +253,30 @@ def add_window():
     e_group = tk.Entry(win, width=30)
     e_group.grid(row=6, column=1, padx=10, pady=5)
 
-    # Сохранить
+    # ===== Кнопка Сохранить =====
     def save_client():
         fio = e_fio.get().strip()
-        dob = e_dob.get_date().strftime("%d.%m.%Y")
+        dob = e_dob.get_date().strftime("%Y-%m-%d")
         phone = e_phone.get().strip()
-        contract = e_contract.get().strip()
-        ippcu_start = e_ippcu_start.get_date().strftime("%d.%m.%Y")
-        ippcu_end = e_ippcu_end.get_date().strftime("%d.%m.%Y")
+        contract_number = e_contract.get().strip()
+        ippcu_start = e_ippcu_start.get_date().strftime("%Y-%m-%d")
+        ippcu_end = e_ippcu_end.get_date().strftime("%Y-%m-%d")
         group = e_group.get().strip()
 
         if not fio:
             messagebox.showerror("Ошибка", "Поле 'ФИО' обязательно для заполнения!")
             return
 
-        c.execute(
-            "INSERT INTO clients (fio, dob, phone, contract, ippcu_start, ippcu_end, group_name) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (fio, dob, phone, contract, ippcu_start, ippcu_end, group)
-        )
-        conn.commit()
-        refresh_clients()
-        win.destroy()
+        try:
+            add_client(fio, dob, phone, contract_number, ippcu_start, ippcu_end, group)
+            refresh_tree()
+            win.destroy()
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Ошибка", f"Не удалось добавить:\n{e}")
 
     tk.Button(win, text="Сохранить", command=save_client).grid(row=7, column=0, columnspan=2, pady=10)
+
 
 
 def edit_client(event=None):
