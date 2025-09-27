@@ -19,13 +19,24 @@ jobs:
         python-version: "3.11"
         architecture: x86
 
-    - name: Cache pip
+    # 🔹 Отдельный кэш для тяжёлых библиотек
+    - name: Cache scientific libs
       uses: actions/cache@v3
       with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        path: |
+          ~/.cache/pip
+        key: ${{ runner.os }}-sci-libs-${{ hashFiles('requirements.txt') }}
         restore-keys: |
-          ${{ runner.os }}-pip-
+          ${{ runner.os }}-sci-libs-
+
+    # 🔹 Отдельный кэш для PyInstaller build
+    - name: Cache pyinstaller build
+      uses: actions/cache@v3
+      with:
+        path: |
+          build
+          __pycache__
+        key: ${{ runner.os }}-pyinstaller-${{ github.sha }}
 
     - name: Create credentials.json from secret
       run: echo "${{ secrets.GOOGLE_CREDENTIALS }}" > credentials.json
@@ -33,18 +44,14 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install --prefer-binary -r requirements.txt
+        pip install --prefer-binary --only-binary=:all: -r requirements.txt
 
     - name: Build exe
       run: |
-        pyinstaller --onefile --windowed app.py --clean ^
-          --collect-all pandas ^
-          --collect-all matplotlib ^
+        pyinstaller --onefile --windowed --noconfirm app.py --clean ^
           --collect-all tkcalendar ^
-          --collect-all PIL ^
-          --collect-all numpy ^
-          --collect-all google ^
-          --collect-all babel
+          --collect-all babel ^
+          --collect-all google
 
     - name: Remove credentials.json
       run: del credentials.json
