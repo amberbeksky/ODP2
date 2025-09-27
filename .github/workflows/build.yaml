@@ -29,13 +29,7 @@ jobs:
 
     - name: Build exe
       run: |
-        pyinstaller --onefile --windowed app.py ^
-          --collect-all pandas ^
-          --collect-all matplotlib ^
-          --collect-all tkcalendar ^
-          --collect-all PIL ^
-          --collect-all numpy ^
-          --log-level=DEBUG > build-log.txt 2>&1
+        pyinstaller --onefile --windowed app.py --collect-all pandas --collect-all matplotlib --collect-all tkcalendar --collect-all PIL --collect-all numpy --log-level=DEBUG > build-log.txt 2>&1
 
     - name: Upload exe artifact
       uses: actions/upload-artifact@v4
