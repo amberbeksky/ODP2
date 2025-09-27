@@ -71,19 +71,11 @@ def init_db():
                 )
                 """
             )
-            # создаём индекс для проверки дублей
-            cur.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique
-                ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
-                """
-            )
             conn.commit()
             return
 
         # Если есть старая схема с fio — мигрируем
         if "fio" in cols and "last_name" not in cols:
-            # создаём временную таблицу с новой схемой
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS clients_new (
@@ -100,69 +92,29 @@ def init_db():
                 )
                 """
             )
-            # переносим данные, разбивая fio
+            # переносим данные
             cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
             rows = cur.fetchall()
             for r in rows:
                 _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
                 last, first, middle = split_fio(fio or "")
-                dob_val = dob or ""
-                try:
-                    cur.execute(
-                        """
-                        INSERT OR IGNORE INTO clients_new
-                        (last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                    )
-                except Exception:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
-                        (last or "", first or "", middle or "", dob_val)
-                    )
-            # удаляем старую таблицу и переименовываем новую
+                cur.execute(
+                    """
+                    INSERT INTO clients_new
+                    (last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (last, first, middle, dob or "", phone, contract_number, ippcu_start, ippcu_end, group_name)
+                )
             cur.execute("DROP TABLE clients")
             cur.execute("ALTER TABLE clients_new RENAME TO clients")
-            # добавляем индекс
-            cur.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique
-                ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
-                """
-            )
             conn.commit()
             return
 
-               # если уже новая схема — просто убеждаемся, что индекс есть
+        # если уже новая схема — ничего не делаем
         if "last_name" in cols and "dob" in cols:
-            # Удалим старый индекс
-            try:
-                cur.execute("DROP INDEX IF EXISTS idx_clients_unique")
-            except Exception:
-                pass
-
-            # Удалим дубликаты (оставляем запись с минимальным id)
-            cur.execute(
-                """
-                DELETE FROM clients
-                WHERE id NOT IN (
-                    SELECT MIN(id) FROM clients
-                    GROUP BY lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob
-                )
-                """
-            )
-            conn.commit()  # 👈 фикс — сохраняем изменения ДО создания индекса
-
-            # Создадим новый уникальный индекс
-            cur.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique
-                ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
-                """
-            )
-            conn.commit()
             return
+
 
 
 
