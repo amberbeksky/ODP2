@@ -9,8 +9,13 @@ from google.oauth2.service_account import Credentials
 import os
 import json
 
-DB_NAME = "clients.db"
+# ================== Пути ==================
+APP_DIR = os.path.join(os.getenv("APPDATA"), "MyApp")
+os.makedirs(APP_DIR, exist_ok=True)
+
+DB_NAME = os.path.join(APP_DIR, "clients.db")
 SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
+
 
 # ================== База данных ==================
 def init_db():
