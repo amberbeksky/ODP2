@@ -1,13 +1,13 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 import sqlite3
 import traceback
 from tkcalendar import DateEntry
 from datetime import datetime, timedelta
-
-# ====== для Google Sheets ======
 import gspread
 from google.oauth2.service_account import Credentials
+import os
+import json
 
 DB_NAME = "clients.db"
 SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
@@ -112,7 +112,12 @@ def delete_client(cid):
 # ================== Google Sheets ==================
 def get_gsheet(sheet_id, sheet_name="Лист1"):
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+
+    creds_json = os.getenv("GOOGLE_CREDENTIALS")
+    if not creds_json:
+        raise RuntimeError("Секрет GOOGLE_CREDENTIALS не найден!")
+
+    creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
     return sheet
