@@ -19,7 +19,7 @@ jobs:
         python-version: "3.11"
         architecture: x86
 
-    # 🔹 Кэш зависимостей (ускорит сборку)
+    # 🔹 Кэш зависимостей pip
     - name: Cache pip
       uses: actions/cache@v3
       with:
@@ -27,6 +27,18 @@ jobs:
         key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
+
+    # 🔹 Кэш для PyInstaller build (ускорит сборку exe)
+    - name: Cache pyinstaller build
+      uses: actions/cache@v3
+      with:
+        path: |
+          build
+          __pycache__
+          .pytest_cache
+        key: ${{ runner.os }}-pyinstaller-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-pyinstaller-
 
     - name: Create credentials.json from secret
       run: echo "${{ secrets.GOOGLE_CREDENTIALS }}" > credentials.json
@@ -37,11 +49,7 @@ jobs:
         pip install -r requirements.txt
 
     - name: Build exe
-      run: |
-        pyinstaller --onefile --windowed --noconfirm app.py --clean ^
-          --collect-all tkcalendar ^
-          --collect-all babel ^
-          --collect-all google
+      run: pyinstaller --onefile --windowed --noconfirm app.py --clean --collect-all tkcalendar --collect-all babel --collect-all google
 
     - name: Remove credentials.json
       run: del credentials.json
