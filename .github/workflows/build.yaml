@@ -19,24 +19,14 @@ jobs:
         python-version: "3.11"
         architecture: x86
 
-    # 🔹 Отдельный кэш для тяжёлых библиотек
-    - name: Cache scientific libs
+    # 🔹 Кэш зависимостей (ускорит сборку)
+    - name: Cache pip
       uses: actions/cache@v3
       with:
-        path: |
-          ~/.cache/pip
-        key: ${{ runner.os }}-sci-libs-${{ hashFiles('requirements.txt') }}
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
         restore-keys: |
-          ${{ runner.os }}-sci-libs-
-
-    # 🔹 Отдельный кэш для PyInstaller build
-    - name: Cache pyinstaller build
-      uses: actions/cache@v3
-      with:
-        path: |
-          build
-          __pycache__
-        key: ${{ runner.os }}-pyinstaller-${{ github.sha }}
+          ${{ runner.os }}-pip-
 
     - name: Create credentials.json from secret
       run: echo "${{ secrets.GOOGLE_CREDENTIALS }}" > credentials.json
@@ -44,7 +34,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install --prefer-binary --only-binary=:all: -r requirements.txt
+        pip install -r requirements.txt
 
     - name: Build exe
       run: |
