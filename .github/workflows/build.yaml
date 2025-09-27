@@ -42,9 +42,11 @@ jobs:
           --collect-all babel `
           --collect-all google
 
-    # ❌ этот шаг убираем, credentials.json остаётся рядом с exe
-    # - name: Remove credentials.json
-    #   run: del credentials.json
+    - name: Install NSIS
+      run: choco install nsis -y
+
+    - name: Build installer (NSIS)
+      run: makensis installer.nsi
 
     - name: Upload exe artifact
       uses: actions/upload-artifact@v4
@@ -53,3 +55,9 @@ jobs:
         path: |
           dist/app.exe
           credentials.json
+
+    - name: Upload setup.exe artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: setup-x86
+        path: setup.exe
