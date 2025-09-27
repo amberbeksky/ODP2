@@ -136,13 +136,13 @@ def init_db():
 
                # если уже новая схема — просто убеждаемся, что индекс есть
         if "last_name" in cols and "dob" in cols:
-            # Удалим старый индекс, если он есть
+            # Удалим старый индекс
             try:
                 cur.execute("DROP INDEX IF EXISTS idx_clients_unique")
             except Exception:
                 pass
 
-            # Удалим дубли (оставляем запись с минимальным id)
+            # Удалим дубликаты (оставляем запись с минимальным id)
             cur.execute(
                 """
                 DELETE FROM clients
@@ -152,16 +152,18 @@ def init_db():
                 )
                 """
             )
+            conn.commit()  # 👈 фикс — сохраняем изменения ДО создания индекса
 
             # Создадим новый уникальный индекс
             cur.execute(
                 """
-                CREATE UNIQUE INDEX idx_clients_unique
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique
                 ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
                 """
             )
             conn.commit()
             return
+
 
 
 
