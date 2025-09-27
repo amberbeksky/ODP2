@@ -29,7 +29,7 @@ jobs:
 
     - name: Build exe
       run: |
-        pyinstaller --onefile --windowed app.py --collect-all pandas --collect-all matplotlib --collect-all tkcalendar
+        pyinstaller --onefile --windowed app.py --collect-all pandas --collect-all matplotlib --collect-all tkcalendar --log-level=DEBUG
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
