@@ -147,7 +147,7 @@ def init_db():
                     ippcu_start TEXT,
                     ippcu_end TEXT,
                     group_name TEXT,
-                    UNIQUE(lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
+                    UNIQUE(last_name, first_name, middle_name, dob)
                 )
                 """
             )
@@ -170,7 +170,7 @@ def init_db():
                     ippcu_start TEXT,
                     ippcu_end TEXT,
                     group_name TEXT,
-                    UNIQUE(lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
+                    UNIQUE(last_name, first_name, middle_name, dob)
                 )
                 """
             )
@@ -180,7 +180,6 @@ def init_db():
             for r in rows:
                 _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
                 last, first, middle = split_fio(fio or "")
-                # Для переносимых строк, если dob пуст — ставим '' (требуем dob NOT NULL, но чтобы не упало)
                 dob_val = dob or ""
                 try:
                     cur.execute(
@@ -205,18 +204,10 @@ def init_db():
 
         # если уже новая схема — ничего не делаем
         if "last_name" in cols and "dob" in cols:
-            # убедимся, что UNIQUE индекс существует (на случай более старых версий)
-            try:
-                cur.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)"
-                )
-            except Exception:
-                pass
             conn.commit()
             return
 
-        # В иных случаях — попытка создать недостающие колонки (на всякий случай)
-        # (этот блок — запасной; чаще всего не нужен)
+        # В иных случаях — добавляем недостающие колонки
         try:
             if "last_name" not in cols:
                 cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
@@ -227,6 +218,7 @@ def init_db():
             conn.commit()
         except Exception:
             pass
+
 
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
