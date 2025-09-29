@@ -10,6 +10,10 @@ import os
 import json
 import sys
 from docx import Document   # <--- добавил для экспорта в Word
+from docx.shared import Pt
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from tkinter import simpledialog
+
 
 # ================== Пути ==================
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyApp")
@@ -41,27 +45,83 @@ def join_fio(last, first, middle):
     return " ".join(parts)
 
 
-# ================== Экспорт в Word ==================
 def export_selected_to_word():
-    selected = tree.selection()
-    if not selected:
-        messagebox.showerror("Ошибка", "Выберите хотя бы одного клиента")
+    selected_items = []
+    for row_id in tree.get_children():
+        values = tree.item(row_id, "values")
+        if values and values[0] == "X":  # галочка стоит
+            selected_items.append(values)
+
+    if not selected_items:
+        messagebox.showerror("Ошибка", "Отметьте галочками хотя бы одного клиента")
+        return
+
+    # Запрос названия смены
+    shift_name = simpledialog.askstring("Смена", "Введите название смены (например: 11 смена)")
+    if not shift_name:
+        return
+
+    # Запрос дат
+    date_range = simpledialog.askstring("Даты", "Введите период (например: с 01.10.2024 по 15.10.2024)")
+    if not date_range:
         return
 
     doc = Document()
-    doc.add_heading("Список обслуживаемых", level=1)
 
-    for i, item in enumerate(selected, start=1):
-        values = tree.item(item)["values"]
-        # values = (ID, Фамилия, Имя, Отчество, ДР, Телефон, Договор, Начало, Окончание, Группа)
-        fio = " ".join(v for v in [values[1], values[2], values[3]] if v)
-        dob = values[4]
-        doc.add_paragraph(f"{i}. {fio} – {dob}")
+    # Заголовок
+    heading = doc.add_heading(f"{shift_name} {date_range}", level=1)
+    heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
 
-    file_path = os.path.join(APP_DIR, "список.docx")
+    # Нумерованный список выбранных клиентов
+    for i, values in enumerate(selected_items, start=1):
+        fio = " ".join(v for v in [values[2], values[3], values[4]] if v)
+        dob = values[5]
+
+        p = doc.add_paragraph(f"{i}. ")
+        run_fio = p.add_run(fio)
+        run_fio.bold = True
+        run_fio.font.size = Pt(12)
+
+        p.add_run(f" — {dob}").font.size = Pt(12)
+
+    # Итог
+    total = len(selected_items)
+    doc.add_paragraph()
+    total_p = doc.add_paragraph(f"Итого: {total} человек")
+    total_p.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+    total_p.runs[0].bold = True
+    total_p.runs[0].font.size = Pt(12)
+
+    # Подпись заведующей
+    doc.add_paragraph()
+    podpis = doc.add_paragraph()
+    podpis.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+
+    run_role = podpis.add_run("Заведующая отделением дневного пребывания ")
+    run_role.font.size = Pt(12)
+
+    run_line = podpis.add_run("__________________ ")
+    run_line.font.size = Pt(12)
+
+    run_name = podpis.add_run("Дурандина А.В.")
+    run_name.font.size = Pt(12)
+
+    # Сохраняем файл на рабочий стол
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+
+    # делаем имя безопасным для файла
+    safe_shift = shift_name.replace(" ", "_")
+    safe_date = date_range.replace(" ", "_").replace(":", "-").replace(".", "-")
+
+    file_name = f"{safe_shift}_{safe_date}.docx"
+    file_path = os.path.join(desktop, file_name)
+
     doc.save(file_path)
 
-    messagebox.showinfo("Готово", f"Список сохранён:\n{file_path}")
+    messagebox.showinfo("Готово", f"Список сохранён на рабочем столе:\n{file_path}")
+
+
+
 
 # ================== База данных ==================
 def init_db():
@@ -340,10 +400,12 @@ def refresh_tree(results=None):
             pass
 
         tree.insert("", "end", values=(
+            " ",  # 👈 первая колонка для галочки всегда пустая
             cid, last or "", first or "", middle or "",
             dob or "", phone or "", contract or "",
             ippcu_start or "", ippcu_end or "", group or ""
         ), tags=(tag,))
+
 
 
 
@@ -604,10 +666,10 @@ date_to_entry = DateEntry(root, width=12, date_pattern="dd.mm.yyyy")
 date_to_entry.grid(row=0, column=4, padx=5)
 tk.Button(root, text="Фильтр", command=do_search).grid(row=0, column=5, padx=5)
 
-# Таблица
+# ================== Таблица ==================
 tree = ttk.Treeview(
     root,
-    columns=("ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
+    columns=("✓", "ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
              "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
     show="headings",
     height=20
@@ -617,9 +679,32 @@ tree.grid(row=1, column=0, columnspan=7, padx=5, pady=5, sticky="nsew")
 for col in tree["columns"]:
     tree.heading(col, text=col)
 
+# Цветовые теги
 tree.tag_configure("expired", background="#ffcccc")
 tree.tag_configure("soon", background="#fff2cc")
 tree.tag_configure("active", background="#ccffcc")
+
+
+# ==== обработчик для чекбоксов ====
+def toggle_check(event):
+    region = tree.identify("region", event.x, event.y)
+    if region != "cell":
+        return
+    col = tree.identify_column(event.x)
+    if col != "#1":  # первая колонка ("✓")
+        return
+
+    row_id = tree.identify_row(event.y)
+    if not row_id:
+        return
+
+    values = list(tree.item(row_id, "values"))
+    current = values[0]  # колонка "✓"
+    values[0] = "X" if current.strip() == "" else " "
+    tree.item(row_id, values=values)
+
+
+tree.bind("<Button-1>", toggle_check)
 
 # Кнопки
 tk.Button(root, text="Добавить", command=add_window).grid(row=2, column=0, padx=5, pady=5)
