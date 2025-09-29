@@ -649,7 +649,9 @@ def do_search():
 
 # ================== MAIN ==================
 root = tk.Tk()
-root.title("База клиентов")
+root.title("Отделение дневного пребывания — Полустационарное обслуживание")
+root.iconbitmap("icon.ico")
+
 
 # Поиск + фильтры
 search_entry = tk.Entry(root, width=40)
