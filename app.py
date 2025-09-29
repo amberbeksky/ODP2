@@ -10,7 +10,7 @@ import os
 import json
 import sys
 from docx import Document   # <--- добавил для экспорта в Word
-from docx.shared import Pt
+from docx.shared import Pt, Cm
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from tkinter import simpledialog
 
@@ -68,34 +68,39 @@ def export_selected_to_word():
 
     doc = Document()
 
-    # Заголовок
-    heading = doc.add_heading(f"{shift_name} {date_range}", level=1)
+    # === Заголовок ===
+    heading = doc.add_paragraph(f"{shift_name} {date_range}")
     heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    run = heading.runs[0]
+    run.bold = True
+    run.font.size = Pt(14)
 
-    # Нумерованный список выбранных клиентов
+    doc.add_paragraph("")  # отступ после заголовка
+
+    # === Нумерованный список выбранных клиентов ===
     for i, values in enumerate(selected_items, start=1):
-        fio = " ".join(v for v in [values[2], values[3], values[4]] if v)
+        last = values[2]
+        first = values[3]
+        middle = values[4]
         dob = values[5]
 
-        p = doc.add_paragraph(f"{i}. ")
-        run_fio = p.add_run(fio)
-        run_fio.bold = True
-        run_fio.font.size = Pt(12)
+        fio = " ".join(v for v in [last, first, middle] if v)
+        p = doc.add_paragraph(f"{i}. {fio} – {dob} г.р.")
+        p.runs[0].font.size = Pt(12)
 
-        p.add_run(f" — {dob}").font.size = Pt(12)
+    # === «Пружина» для смещения итогов и подписи вниз ===
+    spacer = doc.add_paragraph("\n")
+    spacer.paragraph_format.space_after = Pt(300)
 
-    # Итог
+    # === Итог ===
     total = len(selected_items)
-    doc.add_paragraph()
     total_p = doc.add_paragraph(f"Итого: {total} человек")
-    total_p.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
     total_p.runs[0].bold = True
     total_p.runs[0].font.size = Pt(12)
 
-    # Подпись заведующей
-    doc.add_paragraph()
+    # === Подпись заведующей ===
     podpis = doc.add_paragraph()
-    podpis.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+    podpis.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
 
     run_role = podpis.add_run("Заведующая отделением дневного пребывания ")
     run_role.font.size = Pt(12)
@@ -106,19 +111,19 @@ def export_selected_to_word():
     run_name = podpis.add_run("Дурандина А.В.")
     run_name.font.size = Pt(12)
 
-    # Сохраняем файл на рабочий стол
+    # === Сохраняем файл на рабочий стол ===
     desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-
-    # делаем имя безопасным для файла
     safe_shift = shift_name.replace(" ", "_")
     safe_date = date_range.replace(" ", "_").replace(":", "-").replace(".", "-")
-
     file_name = f"{safe_shift}_{safe_date}.docx"
     file_path = os.path.join(desktop, file_name)
 
-    doc.save(file_path)
+    try:
+        doc.save(file_path)
+        messagebox.showinfo("Готово", f"Список сохранён на рабочем столе:\n{file_path}")
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
-    messagebox.showinfo("Готово", f"Список сохранён на рабочем столе:\n{file_path}")
 
 
 
