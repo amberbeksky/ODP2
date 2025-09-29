@@ -1,12 +1,12 @@
 !include "MUI2.nsh"
 
-!define APPNAME "MyApp"
-!define COMPANY "MyCompany"
-!define DESCRIPTION "Программа для управления клиентами"
+!define APPNAME "Отделение дневного пребывания"
+!define COMPANY "Полустационарное обслуживание"
+!define DESCRIPTION "Программа для управления клиентами Отделения дневного пребывания"
 !define VERSION "1.0"
 
 Name "${APPNAME}"
-OutFile "setup.exe"
+OutFile "ODP-Installer.exe"
 InstallDir "$PROGRAMFILES\${APPNAME}"
 
 RequestExecutionLevel admin
@@ -20,17 +20,21 @@ RequestExecutionLevel admin
 
 !insertmacro MUI_LANGUAGE "Russian"
 
+Icon "icon.ico"
+UninstallIcon "icon.ico"
+
 Section "Install"
   SetOutPath "$INSTDIR"
   File "dist\app.exe"
   File "credentials.json"
+  File "icon.ico"
 
   ; Ярлык на рабочий стол
-  CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\app.exe"
+  CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\app.exe" "" "$INSTDIR\icon.ico"
 
   ; Папка в меню Пуск
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
-  CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\app.exe"
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\app.exe" "" "$INSTDIR\icon.ico"
 
   ; Uninstall
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -40,12 +44,13 @@ Section "Install"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "UninstallString" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "Publisher" "${COMPANY}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayIcon" "$INSTDIR\app.exe"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayIcon" "$INSTDIR\icon.ico"
 SectionEnd
 
 Section "Uninstall"
   Delete "$INSTDIR\app.exe"
   Delete "$INSTDIR\credentials.json"
+  Delete "$INSTDIR\icon.ico"
   Delete "$DESKTOP\${APPNAME}.lnk"
 
   ; Удаление меню Пуск
