@@ -10,3 +10,5 @@ babel==2.12.1
 gspread==6.1.2
 google-auth==2.34.0
 google-auth-oauthlib==1.2.1
+lxml==4.9.3
+python-docx==0.8.11
