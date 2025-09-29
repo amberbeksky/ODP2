@@ -58,8 +58,8 @@ jobs:
           dist/app.exe
           credentials.json
 
-    - name: Upload setup.exe artifact
+    - name: Upload installer artifact
       uses: actions/upload-artifact@v4
       with:
         name: setup-x86
-        path: setup.exe
+        path: ODP-Installer.exe
