@@ -9,6 +9,7 @@ from google.oauth2.service_account import Credentials
 import os
 import json
 import sys
+from docx import Document   # <--- добавил для экспорта в Word
 
 # ================== Пути ==================
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyApp")
@@ -22,9 +23,6 @@ SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
 # --- Утилиты ФИО ------
 # ----------------------
 def split_fio(fio: str):
-    """Простое разделение ФИО на фамилию, имя, отчество.
-    Возвращает кортеж (last, first, middle). Если частей меньше — middle = ''.
-    """
     if not fio:
         return "", "", ""
     parts = fio.strip().split()
@@ -32,7 +30,6 @@ def split_fio(fio: str):
         return parts[0], "", ""
     if len(parts) == 2:
         return parts[0], parts[1], ""
-    # >=3 — считаем первые три, остальные присоединим к middle через пробел (на случай составных отчеств)
     last = parts[0]
     first = parts[1]
     middle = " ".join(parts[2:])
@@ -43,6 +40,28 @@ def join_fio(last, first, middle):
     parts = [p for p in (last or "", first or "", middle or "") if p and p.strip()]
     return " ".join(parts)
 
+
+# ================== Экспорт в Word ==================
+def export_selected_to_word():
+    selected = tree.selection()
+    if not selected:
+        messagebox.showerror("Ошибка", "Выберите хотя бы одного клиента")
+        return
+
+    doc = Document()
+    doc.add_heading("Список обслуживаемых", level=1)
+
+    for i, item in enumerate(selected, start=1):
+        values = tree.item(item)["values"]
+        # values = (ID, Фамилия, Имя, Отчество, ДР, Телефон, Договор, Начало, Окончание, Группа)
+        fio = " ".join(v for v in [values[1], values[2], values[3]] if v)
+        dob = values[4]
+        doc.add_paragraph(f"{i}. {fio} – {dob}")
+
+    file_path = os.path.join(APP_DIR, "список.docx")
+    doc.save(file_path)
+
+    messagebox.showinfo("Готово", f"Список сохранён:\n{file_path}")
 
 # ================== База данных ==================
 def init_db():
@@ -67,7 +86,8 @@ def init_db():
                     contract_number TEXT,
                     ippcu_start TEXT,
                     ippcu_end TEXT,
-                    group_name TEXT
+                    group_name TEXT,
+                    UNIQUE(lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
                 )
                 """
             )
@@ -76,6 +96,7 @@ def init_db():
 
         # Если есть старая схема с fio — мигрируем
         if "fio" in cols and "last_name" not in cols:
+            # создаём временную таблицу с новой схемой
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS clients_new (
@@ -88,24 +109,35 @@ def init_db():
                     contract_number TEXT,
                     ippcu_start TEXT,
                     ippcu_end TEXT,
-                    group_name TEXT
+                    group_name TEXT,
+                    UNIQUE(lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)
                 )
                 """
             )
-            # переносим данные
+            # переносим данные, разбивая fio
             cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
             rows = cur.fetchall()
             for r in rows:
                 _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
                 last, first, middle = split_fio(fio or "")
-                cur.execute(
-                    """
-                    INSERT INTO clients_new
-                    (last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (last, first, middle, dob or "", phone, contract_number, ippcu_start, ippcu_end, group_name)
-                )
+                # Для переносимых строк, если dob пуст — ставим '' (требуем dob NOT NULL, но чтобы не упало)
+                dob_val = dob or ""
+                try:
+                    cur.execute(
+                        """
+                        INSERT OR IGNORE INTO clients_new
+                        (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (None, last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                    )
+                except Exception:
+                    # если какие-то данные некорректны — вставим минимально
+                    cur.execute(
+                        "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
+                        (last or "", first or "", middle or "", dob_val)
+                    )
+            # удаляем старую таблицу и переименовываем новую
             cur.execute("DROP TABLE clients")
             cur.execute("ALTER TABLE clients_new RENAME TO clients")
             conn.commit()
@@ -113,11 +145,28 @@ def init_db():
 
         # если уже новая схема — ничего не делаем
         if "last_name" in cols and "dob" in cols:
+            # убедимся, что UNIQUE индекс существует (на случай более старых версий)
+            try:
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_unique ON clients (lower(last_name), lower(first_name), lower(COALESCE(middle_name,'')), dob)"
+                )
+            except Exception:
+                pass
+            conn.commit()
             return
 
-
-
-
+        # В иных случаях — попытка создать недостающие колонки (на всякий случай)
+        # (этот блок — запасной; чаще всего не нужен)
+        try:
+            if "last_name" not in cols:
+                cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
+            if "first_name" not in cols:
+                cur.execute("ALTER TABLE clients ADD COLUMN first_name TEXT")
+            if "middle_name" not in cols:
+                cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
+            conn.commit()
+        except Exception:
+            pass
 
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
@@ -276,9 +325,7 @@ def refresh_tree(results=None):
     soon = today + timedelta(days=30)
 
     for row in results:
-        # row: id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name
         cid, last, first, middle, dob, phone, contract, ippcu_start, ippcu_end, group = row
-        fio = join_fio(last, first, middle)
         tag = ""
         try:
             if ippcu_end:
@@ -292,7 +339,12 @@ def refresh_tree(results=None):
         except Exception:
             pass
 
-        tree.insert("", "end", values=(cid, fio, dob or "", phone or "", contract or "", ippcu_start or "", ippcu_end or "", group or ""), tags=(tag,))
+        tree.insert("", "end", values=(
+            cid, last or "", first or "", middle or "",
+            dob or "", phone or "", contract or "",
+            ippcu_start or "", ippcu_end or "", group or ""
+        ), tags=(tag,))
+
 
 
 def add_window():
@@ -367,89 +419,78 @@ def add_window():
 
 
 def edit_client():
+    """Окно редактирования клиента"""
     selected = tree.selection()
     if not selected:
-        messagebox.showerror("Ошибка", "Выберите клиента для редактирования")
+        messagebox.showwarning("Ошибка", "Выберите клиента для редактирования")
         return
 
-    item = tree.item(selected[0])
-    cid = item["values"][0]
-    fio_display = item["values"][1]
-    dob_display = item["values"][2]
-    phone = item["values"][3]
-    contract = item["values"][4]
-    ippcu_start = item["values"][5]
-    ippcu_end = item["values"][6]
-    group = item["values"][7]
+    values = tree.item(selected[0], "values")
+    cid = values[0]  # ID клиента
 
-    # Получим полные поля из БД (чтобы точно знать last/first/middle)
-    with sqlite3.connect(DB_NAME) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients WHERE id=?", (cid,))
-        row = cur.fetchone()
-        if not row:
-            messagebox.showerror("Ошибка", "Клиент не найден в базе")
-            return
-        last, first, middle, dob_db, phone_db, contract_db, ippcu_start_db, ippcu_end_db, group_db = row
+    # Теперь берем Фамилия / Имя / Отчество из отдельных колонок
+    last, first, middle = values[1], values[2], values[3]
+    dob, phone, contract = values[4], values[5], values[6]
+    ippcu_start, ippcu_end, group = values[7], values[8], values[9]
 
-    win = tk.Toplevel()
-    win.title("Редактировать обслуживаемого")
+    win = tk.Toplevel(root)
+    win.title("Редактировать клиента")
 
-    tk.Label(win, text="Фамилия").grid(row=0, column=0, padx=10, pady=5, sticky="w")
-    e_last = tk.Entry(win, width=30)
-    e_last.insert(0, last or "")
-    e_last.grid(row=0, column=1, padx=10, pady=5)
+    tk.Label(win, text="Фамилия").grid(row=0, column=0)
+    last_entry = tk.Entry(win)
+    last_entry.insert(0, last)
+    last_entry.grid(row=0, column=1)
 
-    tk.Label(win, text="Имя").grid(row=1, column=0, padx=10, pady=5, sticky="w")
-    e_first = tk.Entry(win, width=30)
-    e_first.insert(0, first or "")
-    e_first.grid(row=1, column=1, padx=10, pady=5)
+    tk.Label(win, text="Имя").grid(row=1, column=0)
+    first_entry = tk.Entry(win)
+    first_entry.insert(0, first)
+    first_entry.grid(row=1, column=1)
 
-    tk.Label(win, text="Отчество").grid(row=2, column=0, padx=10, pady=5, sticky="w")
-    e_middle = tk.Entry(win, width=30)
-    e_middle.insert(0, middle or "")
-    e_middle.grid(row=2, column=1, padx=10, pady=5)
+    tk.Label(win, text="Отчество").grid(row=2, column=0)
+    middle_entry = tk.Entry(win)
+    middle_entry.insert(0, middle)
+    middle_entry.grid(row=2, column=1)
 
-    tk.Label(win, text="Дата рождения").grid(row=3, column=0, padx=10, pady=5, sticky="w")
-    e_dob = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
-    try:
-        e_dob.set_date(datetime.strptime(dob_db, "%Y-%m-%d"))
-    except Exception:
-        pass
-    e_dob.grid(row=3, column=1, padx=10, pady=5)
+    tk.Label(win, text="Дата рождения (ГГГГ-ММ-ДД)").grid(row=3, column=0)
+    dob_entry = tk.Entry(win)
+    dob_entry.insert(0, dob)
+    dob_entry.grid(row=3, column=1)
 
-    tk.Label(win, text="Телефон").grid(row=4, column=0, padx=10, pady=5, sticky="w")
-    e_phone = tk.Entry(win, width=30)
-    e_phone.insert(0, phone_db or "")
-    e_phone.grid(row=4, column=1, padx=10, pady=5)
+    tk.Label(win, text="Телефон").grid(row=4, column=0)
+    phone_entry = tk.Entry(win)
+    phone_entry.insert(0, phone)
+    phone_entry.grid(row=4, column=1)
 
-    tk.Label(win, text="Номер договора").grid(row=5, column=0, padx=10, pady=5, sticky="w")
-    e_contract = tk.Entry(win, width=30)
-    e_contract.insert(0, contract_db or "")
-    e_contract.grid(row=5, column=1, padx=10, pady=5)
+    tk.Label(win, text="Номер договора").grid(row=5, column=0)
+    contract_entry = tk.Entry(win)
+    contract_entry.insert(0, contract)
+    contract_entry.grid(row=5, column=1)
 
-    tk.Label(win, text="Дата начала ИППСУ").grid(row=6, column=0, padx=10, pady=5, sticky="w")
-    e_ippcu_start = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
-    try:
-        if ippcu_start_db:
-            e_ippcu_start.set_date(datetime.strptime(ippcu_start_db, "%Y-%m-%d"))
-    except Exception:
-        pass
-    e_ippcu_start.grid(row=6, column=1, padx=10, pady=5)
+    tk.Label(win, text="Дата начала ИППСУ").grid(row=6, column=0)
+    start_entry = tk.Entry(win)
+    start_entry.insert(0, ippcu_start)
+    start_entry.grid(row=6, column=1)
 
-    tk.Label(win, text="Дата окончания ИППСУ").grid(row=7, column=0, padx=10, pady=5, sticky="w")
-    e_ippcu_end = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
-    try:
-        if ippcu_end_db:
-            e_ippcu_end.set_date(datetime.strptime(ippcu_end_db, "%Y-%m-%d"))
-    except Exception:
-        pass
-    e_ippcu_end.grid(row=7, column=1, padx=10, pady=5)
+    tk.Label(win, text="Дата окончания ИППСУ").grid(row=7, column=0)
+    end_entry = tk.Entry(win)
+    end_entry.insert(0, ippcu_end)
+    end_entry.grid(row=7, column=1)
 
-    tk.Label(win, text="Группа").grid(row=8, column=0, padx=10, pady=5, sticky="w")
-    e_group = tk.Entry(win, width=30)
-    e_group.insert(0, group_db or "")
-    e_group.grid(row=8, column=1, padx=10, pady=5)
+    tk.Label(win, text="Группа").grid(row=8, column=0)
+    group_entry = tk.Entry(win)
+    group_entry.insert(0, group)
+    group_entry.grid(row=8, column=1)
+
+    def save_changes():
+        update_client(cid,
+                      last_entry.get(), first_entry.get(), middle_entry.get(),
+                      dob_entry.get(), phone_entry.get(), contract_entry.get(),
+                      start_entry.get(), end_entry.get(), group_entry.get())
+        refresh_tree()
+        win.destroy()
+
+    tk.Button(win, text="Сохранить", command=save_changes).grid(row=9, column=0, columnspan=2, pady=10)
+
 
     def save_edit():
         new_last = e_last.get().strip()
@@ -508,8 +549,43 @@ def do_search():
     date_from = date_from_entry.get_date().strftime("%Y-%m-%d") if date_from_entry.get() else None
     date_to = date_to_entry.get_date().strftime("%Y-%m-%d") if date_to_entry.get() else None
 
-    results = search_clients(query=query, date_from=date_from, date_to=date_to, limit=200)
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        q = (query or "").strip().lower()
+        like = f"%{q}%"
+
+        # Основной запрос
+        sql = """
+            SELECT id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name
+            FROM clients
+            WHERE (
+                lower(last_name) LIKE ?
+                OR lower(first_name) LIKE ?
+                OR lower(COALESCE(middle_name,'')) LIKE ?
+                OR lower(last_name || ' ' || first_name || ' ' || COALESCE(middle_name,'')) LIKE ?
+                OR lower(contract_number) LIKE ?
+                OR lower(phone) LIKE ?
+                OR lower(COALESCE(group_name,'')) LIKE ?
+            )
+        """
+        params = [like, like, like, like, like, like, like]
+
+        # Фильтры по датам окончания
+        if date_from:
+            sql += " AND DATE(ippcu_end) >= DATE(?) "
+            params.append(date_from)
+        if date_to:
+            sql += " AND DATE(ippcu_end) <= DATE(?) "
+            params.append(date_to)
+
+        sql += " ORDER BY lower(last_name), lower(first_name) LIMIT ?"
+        params.append(200)
+
+        cur.execute(sql, params)
+        results = cur.fetchall()
+
     refresh_tree(results)
+
 
 
 # ================== MAIN ==================
@@ -528,16 +604,19 @@ date_to_entry = DateEntry(root, width=12, date_pattern="dd.mm.yyyy")
 date_to_entry.grid(row=0, column=4, padx=5)
 tk.Button(root, text="Фильтр", command=do_search).grid(row=0, column=5, padx=5)
 
-# Таблица (ID, ФИО, ДР, Телефон, Договор, Начало, Окончание, Группа)
-tree = ttk.Treeview(root, columns=("ID", "ФИО", "Дата рождения", "Телефон",
-                                   "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
-                    show="headings", height=20)
+# Таблица
+tree = ttk.Treeview(
+    root,
+    columns=("ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
+             "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
+    show="headings",
+    height=20
+)
 tree.grid(row=1, column=0, columnspan=7, padx=5, pady=5, sticky="nsew")
 
 for col in tree["columns"]:
     tree.heading(col, text=col)
 
-# Настройка цветов
 tree.tag_configure("expired", background="#ffcccc")
 tree.tag_configure("soon", background="#fff2cc")
 tree.tag_configure("active", background="#ccffcc")
@@ -547,6 +626,7 @@ tk.Button(root, text="Добавить", command=add_window).grid(row=2, column=
 tk.Button(root, text="Редактировать", command=edit_client).grid(row=2, column=1, padx=5, pady=5)
 tk.Button(root, text="Удалить", command=delete_selected).grid(row=2, column=2, padx=5, pady=5)
 tk.Button(root, text="Импорт Google Sheets", command=import_from_gsheet).grid(row=2, column=3, padx=5, pady=5)
+tk.Button(root, text="Экспорт в Word", command=export_selected_to_word).grid(row=2, column=4, padx=5, pady=5)  # <--- новая кнопка
 
 root.grid_rowconfigure(1, weight=1)
 root.grid_columnconfigure(0, weight=1)
