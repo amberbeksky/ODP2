@@ -9,11 +9,10 @@ from google.oauth2.service_account import Credentials
 import os
 import json
 import sys
-from docx import Document   # <--- добавил для экспорта в Word
+from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from tkinter import simpledialog
-
 
 # ================== Пути ==================
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyApp")
@@ -22,6 +21,116 @@ os.makedirs(APP_DIR, exist_ok=True)
 DB_NAME = os.path.join(APP_DIR, "clients.db")
 SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
 
+# ================== macOS СТИЛЬ ==================
+def setup_macos_style():
+    """Настройка macOS-стиля для приложения"""
+    style = ttk.Style()
+    
+    try:
+        style.theme_use('aqua')
+    except:
+        try:
+            style.theme_use('clam')
+        except:
+            pass
+    
+    bg_color = '#f5f5f7'
+    accent_color = '#007AFF'
+    text_color = '#1d1d1f'
+    
+    style.configure('TFrame', background=bg_color)
+    style.configure('TLabel', background=bg_color, foreground=text_color)
+    style.configure('TButton', font=('System', 12), padding=(15, 8))
+    style.configure('Accent.TButton', background=accent_color, foreground='white')
+    style.configure('Treeview', background='white', fieldbackground='white', foreground=text_color)
+    style.configure('Treeview.Heading', background='#e8e8ed', foreground=text_color, font=('System', 12, 'bold'))
+    style.map('Treeview', background=[('selected', accent_color)])
+    
+    return bg_color, accent_color, text_color
+
+def create_header(root, bg_color, accent_color):
+    """Создание заголовка в macOS-стиле"""
+    header_frame = tk.Frame(root, bg=accent_color, height=60)
+    header_frame.grid(row=0, column=0, columnspan=8, sticky='ew')
+    header_frame.grid_propagate(False)
+    
+    title_label = tk.Label(header_frame, 
+                          text="Отделение дневного пребывания",
+                          bg=accent_color,
+                          fg='white',
+                          font=('System', 18, 'bold'))
+    title_label.pack(side=tk.LEFT, padx=20, pady=15)
+    
+    subtitle_label = tk.Label(header_frame,
+                             text="Полустационарное обслуживание",
+                             bg=accent_color,
+                             fg='white',
+                             font=('System', 12))
+    subtitle_label.pack(side=tk.LEFT, padx=0, pady=15)
+    
+    return header_frame
+
+def create_modern_button(parent, text, command, accent=False, width=15):
+    """Создание современной кнопки в macOS-стиле"""
+    style = 'Accent.TButton' if accent else 'TButton'
+    btn = ttk.Button(parent, text=text, command=command, style=style, width=width)
+    return btn
+
+def create_search_frame(root, bg_color):
+    """Создание панели поиска в macOS-стиле"""
+    search_frame = tk.Frame(root, bg=bg_color, padx=10, pady=10)
+    search_frame.grid(row=1, column=0, columnspan=8, sticky='ew', padx=10, pady=5)
+    
+    tk.Label(search_frame, text="🔍 Поиск:", bg=bg_color, 
+             font=('System', 11)).grid(row=0, column=0, padx=(0,5), pady=5)
+    
+    search_entry = tk.Entry(search_frame, width=40, font=('System', 11),
+                           relief='flat', bg='white', bd=1)
+    search_entry.grid(row=0, column=1, padx=5, pady=5)
+    
+    search_btn = create_modern_button(search_frame, "Найти", lambda: do_search())
+    search_btn.grid(row=0, column=2, padx=5, pady=5)
+    
+    tk.Label(search_frame, text="Дата окончания ИППСУ:", bg=bg_color,
+             font=('System', 11)).grid(row=0, column=3, padx=(20,5), pady=5)
+    
+    date_from_entry = DateEntry(search_frame, width=12, date_pattern="dd.mm.yyyy",
+                               font=('System', 10))
+    date_from_entry.grid(row=0, column=4, padx=5, pady=5)
+    
+    tk.Label(search_frame, text="по", bg=bg_color,
+             font=('System', 11)).grid(row=0, column=5, padx=5, pady=5)
+    
+    date_to_entry = DateEntry(search_frame, width=12, date_pattern="dd.mm.yyyy",
+                             font=('System', 10))
+    date_to_entry.grid(row=0, column=6, padx=5, pady=5)
+    
+    filter_btn = create_modern_button(search_frame, "Фильтр", lambda: do_search())
+    filter_btn.grid(row=0, column=7, padx=5, pady=5)
+    
+    return search_entry, date_from_entry, date_to_entry, search_frame
+
+def create_buttons_frame(root, bg_color):
+    """Создание панели кнопок в macOS-стиле"""
+    buttons_frame = tk.Frame(root, bg=bg_color, padx=10, pady=10)
+    buttons_frame.grid(row=2, column=0, columnspan=8, sticky='ew', padx=10, pady=5)
+    
+    buttons = [
+        ("➕ Добавить", add_window),
+        ("✏️ Редактировать", edit_client),
+        ("🗑️ Удалить", delete_selected),
+        ("👁️ Быстрый просмотр", lambda: quick_view(tree.item(tree.selection()[0], "values")[1] if tree.selection() else None)),
+        ("📥 Импорт Sheets", import_from_gsheet),
+        ("📄 Экспорт в Word", export_selected_to_word),
+        ("📏 Автоподбор", lambda: auto_resize_columns(tree)),
+        ("📊 Статистика", show_statistics)
+    ]
+    
+    for i, (text, command) in enumerate(buttons):
+        btn = create_modern_button(buttons_frame, text, command, accent=(i == 0))
+        btn.grid(row=0, column=i, padx=3, pady=5)
+    
+    return buttons_frame
 
 # ----------------------
 # --- Утилиты ФИО ------
@@ -39,201 +148,10 @@ def split_fio(fio: str):
     middle = " ".join(parts[2:])
     return last, first, middle
 
-
 def join_fio(last, first, middle):
     parts = [p for p in (last or "", first or "", middle or "") if p and p.strip()]
     return " ".join(parts)
 
-
-def export_selected_to_word():
-    selected_items = []
-    for row_id in tree.get_children():
-        values = tree.item(row_id, "values")
-        if values and values[0] == "X":  # галочка стоит
-            selected_items.append(values)
-
-    if not selected_items:
-        messagebox.showerror("Ошибка", "Отметьте галочками хотя бы одного клиента")
-        return
-
-    # Запрос названия смены
-    shift_name = simpledialog.askstring("Смена", "Введите название смены (например: 11 смена)")
-    if not shift_name:
-        return
-
-    # Запрос дат
-    date_range = simpledialog.askstring("Даты", "Введите период (например: с 01.10.2024 по 15.10.2024)")
-    if not date_range:
-        return
-
-    doc = Document()
-
-    # === Заголовок ===
-    heading = doc.add_paragraph(f"{shift_name} {date_range}")
-    heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-    run = heading.runs[0]
-    run.bold = True
-    run.font.size = Pt(14)
-
-    doc.add_paragraph("")  # отступ после заголовка
-
-    # === Нумерованный список выбранных клиентов ===
-    for i, values in enumerate(selected_items, start=1):
-        last = values[2]
-        first = values[3]
-        middle = values[4]
-        dob = values[5]
-
-        fio = " ".join(v for v in [last, first, middle] if v)
-        p = doc.add_paragraph(f"{i}. {fio} – {dob} г.р.")
-        p.runs[0].font.size = Pt(12)
-
-    # === «Пружина» для смещения итогов и подписи вниз ===
-    spacer = doc.add_paragraph("\n")
-    spacer.paragraph_format.space_after = Pt(300)
-
-    # === Итог ===
-    total = len(selected_items)
-    total_p = doc.add_paragraph(f"Итого: {total} человек")
-    total_p.runs[0].bold = True
-    total_p.runs[0].font.size = Pt(12)
-
-    # === Подпись заведующей ===
-    podpis = doc.add_paragraph()
-    podpis.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-
-    run_role = podpis.add_run("Заведующая отделением дневного пребывания ")
-    run_role.font.size = Pt(12)
-
-    run_line = podpis.add_run("__________________ ")
-    run_line.font.size = Pt(12)
-
-    run_name = podpis.add_run("Дурандина А.В.")
-    run_name.font.size = Pt(12)
-
-    # === Сохраняем файл на рабочий стол ===
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-    safe_shift = shift_name.replace(" ", "_")
-    safe_date = date_range.replace(" ", "_").replace(":", "-").replace(".", "-")
-    file_name = f"{safe_shift}_{safe_date}.docx"
-    file_path = os.path.join(desktop, file_name)
-
-    try:
-        doc.save(file_path)
-        messagebox.showinfo("Готово", f"Список сохранён на рабочем столе:\n{file_path}")
-    except Exception as e:
-        messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
-
-    # === ДОБАВЬТЕ ЭТОТ БЛОК В КОНЕЦ ФУНКЦИИ ===
-    # После экспорта сбрасываем галочки и обновляем счетчик
-    for row_id in tree.get_children():
-        values = list(tree.item(row_id, "values"))
-        if values[0] == "X":
-            values[0] = " "
-            tree.item(row_id, values=values)
-    
-    if hasattr(root, 'update_word_count'):
-        root.update_word_count()
-
-
-
-
-# ================== База данных ==================
-def init_db():
-    """Создаёт новую схему или мигрирует старую (если есть колонка fio)."""
-    with sqlite3.connect(DB_NAME) as conn:
-        cur = conn.cursor()
-        # проверим структуру
-        cur.execute("PRAGMA table_info(clients)")
-        cols = [r[1] for r in cur.fetchall()]
-
-        if not cols:
-            # таблицы нет — создаём новый вариант
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS clients (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    last_name TEXT NOT NULL,
-                    first_name TEXT NOT NULL,
-                    middle_name TEXT,
-                    dob TEXT NOT NULL,
-                    phone TEXT,
-                    contract_number TEXT,
-                    ippcu_start TEXT,
-                    ippcu_end TEXT,
-                    group_name TEXT,
-                    UNIQUE(last_name, first_name, middle_name, dob)
-                )
-                """
-            )
-            conn.commit()
-            return
-
-        # Если есть старая схема с fio — мигрируем
-        if "fio" in cols and "last_name" not in cols:
-            # создаём временную таблицу с новой схемой
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS clients_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    last_name TEXT NOT NULL,
-                    first_name TEXT NOT NULL,
-                    middle_name TEXT,
-                    dob TEXT NOT NULL,
-                    phone TEXT,
-                    contract_number TEXT,
-                    ippcu_start TEXT,
-                    ippcu_end TEXT,
-                    group_name TEXT,
-                    UNIQUE(last_name, first_name, middle_name, dob)
-                )
-                """
-            )
-            # переносим данные, разбивая fio
-            cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
-            rows = cur.fetchall()
-            for r in rows:
-                _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
-                last, first, middle = split_fio(fio or "")
-                dob_val = dob or ""
-                try:
-                    cur.execute(
-                        """
-                        INSERT OR IGNORE INTO clients_new
-                        (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (None, last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                    )
-                except Exception:
-                    # если какие-то данные некорректны — вставим минимально
-                    cur.execute(
-                        "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
-                        (last or "", first or "", middle or "", dob_val)
-                    )
-            # удаляем старую таблицу и переименовываем новую
-            cur.execute("DROP TABLE clients")
-            cur.execute("ALTER TABLE clients_new RENAME TO clients")
-            conn.commit()
-            return
-
-        # если уже новая схема — ничего не делаем
-        if "last_name" in cols and "dob" in cols:
-            conn.commit()
-            return
-
-        # В иных случаях — добавляем недостающие колонки
-        try:
-            if "last_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
-            if "first_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN first_name TEXT")
-            if "middle_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
-            conn.commit()
-        except Exception:
-            pass
-            
 # ================== Контекстное меню ==================
 def show_context_menu(event):
     """Показать контекстное меню по правому клику"""
@@ -375,20 +293,17 @@ def auto_resize_columns(tree, max_width=400):
     """Автоподбор ширины колонок с ограничением по максимальной ширине"""
     tree.update_idletasks()
     
-    # Определяем приоритеты колонок (какие должны быть шире)
     column_priority = {
         "Фамилия": 2, "Имя": 2, "Отчество": 2, 
         "Дата рождения": 1, "Телефон": 1, "Номер договора": 1,
         "Дата начала ИППСУ": 1, "Дата окончания ИППСУ": 1, "Группа": 1,
-        "✓": 0, "ID": 0  # Эти колонки делаем узкими
+        "✓": 0, "ID": 0
     }
     
     for col in tree["columns"]:
-        # Ширина заголовка
         header_text = tree.heading(col)["text"]
         header_width = tk.font.Font().measure(header_text) + 30
         
-        # Ширина по содержимому
         content_width = header_width
         for item in tree.get_children():
             cell_value = str(tree.set(item, col))
@@ -396,23 +311,19 @@ def auto_resize_columns(tree, max_width=400):
             if cell_width > content_width:
                 content_width = cell_width
         
-        # Учитываем приоритет колонки
         priority = column_priority.get(header_text, 1)
-        if priority == 0:  # Узкие колонки
+        if priority == 0:
             final_width = min(content_width, 80)
-        elif priority == 2:  # Широкие колонки (ФИО)
+        elif priority == 2:
             final_width = min(content_width, max_width)
-        else:  # Средние колонки
+        else:
             final_width = min(content_width, 150)
         
         tree.column(col, width=final_width, minwidth=30)
 
 def setup_tree_behavior(tree):
     """Настройка поведения таблицы"""
-    
-    # Двойной клик на разделитель колонок - автоподбор
     def on_header_click(event):
-        # Определяем, был ли клик на разделителе колонок
         region = tree.identify("region", event.x, event.y)
         if region == "separator":
             column = tree.identify_column(event.x)
@@ -428,11 +339,9 @@ def auto_resize_single_column(tree, col_name):
     """Автоподбор ширины для одной колонки"""
     tree.update_idletasks()
     
-    # Ширина заголовка
     header_text = tree.heading(col_name)["text"]
     header_width = tk.font.Font().measure(header_text) + 30
     
-    # Ширина по содержимому
     content_width = header_width
     for item in tree.get_children():
         cell_value = str(tree.set(item, col_name))
@@ -445,7 +354,6 @@ def auto_resize_single_column(tree, col_name):
 
 def setup_initial_columns(tree):
     """Начальная настройка колонок"""
-    # Устанавливаем разумные начальные ширины
     tree.column("✓", width=30, minwidth=20, stretch=False)
     tree.column("ID", width=40, minwidth=30, stretch=False)
     tree.column("Фамилия", width=120, minwidth=80)
@@ -458,16 +366,263 @@ def setup_initial_columns(tree):
     tree.column("Дата окончания ИППСУ", width=120, minwidth=80)
     tree.column("Группа", width=100, minwidth=80)
 
+def show_statistics():
+    """Показать статистику по клиентам"""
+    clients = get_all_clients(limit=10000)
+    total = len(clients)
+    
+    today = datetime.today().date()
+    active = 0
+    expired = 0
+    soon = 0
+    groups = {}
+    
+    for client in clients:
+        ippcu_end = client[8]
+        group = client[9] or "Без группы"
+        
+        if group not in groups:
+            groups[group] = 0
+        groups[group] += 1
+        
+        if ippcu_end:
+            try:
+                end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
+                if end_date < today:
+                    expired += 1
+                elif end_date <= today + timedelta(days=30):
+                    soon += 1
+                else:
+                    active += 1
+            except:
+                pass
+    
+    stats_text = f"""📊 СТАТИСТИКА
+
+Всего клиентов: {total}
+├─ Активные ИППСУ: {active}
+├─ Истекают в течение 30 дней: {soon}
+└─ Просроченные ИППСУ: {expired}
+
+📂 РАСПРЕДЕЛЕНИЕ ПО ГРУППАМ:"""
+    
+    for group, count in sorted(groups.items()):
+        percentage = (count / total) * 100 if total > 0 else 0
+        stats_text += f"\n├─ {group}: {count} чел. ({percentage:.1f}%)"
+    
+    messagebox.showinfo("📊 Статистика", stats_text)
+
+def check_expiring_ippcu():
+    """Проверка истекающих ИППСУ при запуске"""
+    clients = get_all_clients(limit=10000)
+    today = datetime.today().date()
+    
+    expiring = []
+    expired = []
+    
+    for client in clients:
+        ippcu_end = client[8]
+        if ippcu_end:
+            try:
+                end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
+                days_left = (end_date - today).days
+                
+                if 0 <= days_left <= 7:
+                    expiring.append((client, days_left))
+                elif days_left < 0:
+                    expired.append((client, abs(days_left)))
+            except:
+                pass
+    
+    messages = []
+    
+    if expired:
+        messages.append(f"❌ ПРОСРОЧЕНЫ {len(expired)} ИППСУ!")
+        for client, days in expired[:3]:
+            messages.append(f"   {client[1]} {client[2]} - просрочено {days} дн. назад")
+    
+    if expiring:
+        messages.append(f"⚠️ ИСТЕКАЮТ {len(expiring)} ИППСУ в течение недели!")
+        for client, days in expiring[:3]:
+            messages.append(f"   {client[1]} {client[2]} - осталось {days} дн.")
+    
+    if messages:
+        messagebox.showwarning("Внимание!", "\n".join(messages))
+
+def export_selected_to_word():
+    selected_items = []
+    for row_id in tree.get_children():
+        values = tree.item(row_id, "values")
+        if values and values[0] == "X":
+            selected_items.append(values)
+
+    if not selected_items:
+        messagebox.showerror("Ошибка", "Отметьте галочками хотя бы одного клиента")
+        return
+
+    shift_name = simpledialog.askstring("Смена", "Введите название смены (например: 11 смена)")
+    if not shift_name:
+        return
+
+    date_range = simpledialog.askstring("Даты", "Введите период (например: с 01.10.2024 по 15.10.2024)")
+    if not date_range:
+        return
+
+    doc = Document()
+
+    heading = doc.add_paragraph(f"{shift_name} {date_range}")
+    heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    run = heading.runs[0]
+    run.bold = True
+    run.font.size = Pt(14)
+
+    doc.add_paragraph("")
+
+    for i, values in enumerate(selected_items, start=1):
+        last = values[2]
+        first = values[3]
+        middle = values[4]
+        dob = values[5]
+
+        fio = " ".join(v for v in [last, first, middle] if v)
+        p = doc.add_paragraph(f"{i}. {fio} – {dob} г.р.")
+        p.runs[0].font.size = Pt(12)
+
+    spacer = doc.add_paragraph("\n")
+    spacer.paragraph_format.space_after = Pt(300)
+
+    total = len(selected_items)
+    total_p = doc.add_paragraph(f"Итого: {total} человек")
+    total_p.runs[0].bold = True
+    total_p.runs[0].font.size = Pt(12)
+
+    podpis = doc.add_paragraph()
+    podpis.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+
+    run_role = podpis.add_run("Заведующая отделением дневного пребывания ")
+    run_role.font.size = Pt(12)
+
+    run_line = podpis.add_run("__________________ ")
+    run_line.font.size = Pt(12)
+
+    run_name = podpis.add_run("Дурандина А.В.")
+    run_name.font.size = Pt(12)
+
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    safe_shift = shift_name.replace(" ", "_")
+    safe_date = date_range.replace(" ", "_").replace(":", "-").replace(".", "-")
+    file_name = f"{safe_shift}_{safe_date}.docx"
+    file_path = os.path.join(desktop, file_name)
+
+    try:
+        doc.save(file_path)
+        messagebox.showinfo("Готово", f"Список сохранён на рабочем столе:\n{file_path}")
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
+
+    for row_id in tree.get_children():
+        values = list(tree.item(row_id, "values"))
+        if values[0] == "X":
+            values[0] = " "
+            tree.item(row_id, values=values)
+    
+    if hasattr(root, 'update_word_count'):
+        root.update_word_count()
+
+# ================== База данных ==================
+def init_db():
+    """Создаёт новую схему или мигрирует старую (если есть колонка fio)."""
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(clients)")
+        cols = [r[1] for r in cur.fetchall()]
+
+        if not cols:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS clients (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    last_name TEXT NOT NULL,
+                    first_name TEXT NOT NULL,
+                    middle_name TEXT,
+                    dob TEXT NOT NULL,
+                    phone TEXT,
+                    contract_number TEXT,
+                    ippcu_start TEXT,
+                    ippcu_end TEXT,
+                    group_name TEXT,
+                    UNIQUE(last_name, first_name, middle_name, dob)
+                )
+                """
+            )
+            conn.commit()
+            return
+
+        if "fio" in cols and "last_name" not in cols:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS clients_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    last_name TEXT NOT NULL,
+                    first_name TEXT NOT NULL,
+                    middle_name TEXT,
+                    dob TEXT NOT NULL,
+                    phone TEXT,
+                    contract_number TEXT,
+                    ippcu_start TEXT,
+                    ippcu_end TEXT,
+                    group_name TEXT,
+                    UNIQUE(last_name, first_name, middle_name, dob)
+                )
+                """
+            )
+            cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
+            rows = cur.fetchall()
+            for r in rows:
+                _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
+                last, first, middle = split_fio(fio or "")
+                dob_val = dob or ""
+                try:
+                    cur.execute(
+                        """
+                        INSERT OR IGNORE INTO clients_new
+                        (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (None, last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                    )
+                except Exception:
+                    cur.execute(
+                        "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
+                        (last or "", first or "", middle or "", dob_val)
+                    )
+            cur.execute("DROP TABLE clients")
+            cur.execute("ALTER TABLE clients_new RENAME TO clients")
+            conn.commit()
+            return
+
+        if "last_name" in cols and "dob" in cols:
+            conn.commit()
+            return
+
+        try:
+            if "last_name" not in cols:
+                cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
+            if "first_name" not in cols:
+                cur.execute("ALTER TABLE clients ADD COLUMN first_name TEXT")
+            if "middle_name" not in cols:
+                cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
+            conn.commit()
+        except Exception:
+            pass
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
     """Добавление с проверкой дублей (по ФИО+дата рождения, без учёта регистра)."""
     with sqlite3.connect(DB_NAME) as conn:
         cur = conn.cursor()
-        # normalise empty middle to ''
         middle_name = middle_name or ""
         dob_val = dob or ""
 
-        # проверка дубля
         cur.execute(
             """
             SELECT id FROM clients
@@ -487,7 +642,6 @@ def add_client(last_name, first_name, middle_name, dob, phone, contract_number, 
         )
         conn.commit()
 
-
 def get_all_clients(limit=200):
     with sqlite3.connect(DB_NAME) as conn:
         cur = conn.cursor()
@@ -501,7 +655,6 @@ def get_all_clients(limit=200):
             (limit,),
         )
         return cur.fetchall()
-
 
 def search_clients(query="", date_from=None, date_to=None, limit=200):
     with sqlite3.connect(DB_NAME) as conn:
@@ -530,7 +683,6 @@ def search_clients(query="", date_from=None, date_to=None, limit=200):
         cur.execute(sql, params)
         return cur.fetchall()
 
-
 def update_client(cid, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
     with sqlite3.connect(DB_NAME) as conn:
         cur = conn.cursor()
@@ -544,20 +696,17 @@ def update_client(cid, last_name, first_name, middle_name, dob, phone, contract_
         )
         conn.commit()
 
-
 def delete_client(cid):
     with sqlite3.connect(DB_NAME) as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM clients WHERE id=?", (cid,))
         conn.commit()
 
-
 # ================== Google Sheets ==================
 def get_gsheet(sheet_id, sheet_name="Лист1"):
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
-    # Если нет env — пробуем файл рядом с exe/скриптом
     if not creds_json:
         if getattr(sys, "frozen", False):
             exe_dir = os.path.dirname(sys.executable)
@@ -573,7 +722,6 @@ def get_gsheet(sheet_id, sheet_name="Лист1"):
     client = gspread.authorize(creds)
     sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
     return sheet
-
 
 def import_from_gsheet():
     try:
@@ -594,14 +742,12 @@ def import_from_gsheet():
                 add_client(last, first, middle, dob, phone, contract, ippcu_start, ippcu_end, group)
                 added += 1
             except ValueError:
-                # дубликат — пропускаем
                 continue
         refresh_tree()
         messagebox.showinfo("Успех", f"Импорт из Google Sheets завершён! Добавлено: {added}")
     except Exception as e:
         traceback.print_exc()
         messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
-
 
 # ================== UI ==================
 def refresh_tree(results=None):
@@ -630,23 +776,18 @@ def refresh_tree(results=None):
             pass
 
         tree.insert("", "end", values=(
-            " ",  # 👈 первая колонка для галочки всегда пустая
+            " ",
             cid, last or "", first or "", middle or "",
             dob or "", phone or "", contract or "",
             ippcu_start or "", ippcu_end or "", group or ""
         ), tags=(tag,))
     
-    # Автоподбор ширины колонок после обновления данных
     root.after(100, lambda: auto_resize_columns(tree))
-
-
-
 
 def add_window():
     win = tk.Toplevel()
     win.title("Добавить обслуживаемого")
 
-    # Фамилия / Имя / Отчество
     tk.Label(win, text="Фамилия").grid(row=0, column=0, padx=10, pady=5, sticky="w")
     e_last = tk.Entry(win, width=30)
     e_last.grid(row=0, column=1, padx=10, pady=5)
@@ -659,12 +800,10 @@ def add_window():
     e_middle = tk.Entry(win, width=30)
     e_middle.grid(row=2, column=1, padx=10, pady=5)
 
-    # Дата рождения
     tk.Label(win, text="Дата рождения").grid(row=3, column=0, padx=10, pady=5, sticky="w")
     e_dob = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
     e_dob.grid(row=3, column=1, padx=10, pady=5)
 
-    # Остальные поля
     tk.Label(win, text="Телефон").grid(row=4, column=0, padx=10, pady=5, sticky="w")
     e_phone = tk.Entry(win, width=30)
     e_phone.grid(row=4, column=1, padx=10, pady=5)
@@ -712,7 +851,6 @@ def add_window():
 
     tk.Button(win, text="Сохранить", command=save_client).grid(row=9, column=0, columnspan=2, pady=10)
 
-
 def edit_client():
     """Окно редактирования клиента"""
     selected = tree.selection()
@@ -721,12 +859,11 @@ def edit_client():
         return
 
     values = tree.item(selected[0], "values")
-    cid = values[0]  # ID клиента
+    cid = values[1]
 
-    # Теперь берем Фамилия / Имя / Отчество из отдельных колонок
-    last, first, middle = values[1], values[2], values[3]
-    dob, phone, contract = values[4], values[5], values[6]
-    ippcu_start, ippcu_end, group = values[7], values[8], values[9]
+    last, first, middle = values[2], values[3], values[4]
+    dob, phone, contract = values[5], values[6], values[7]
+    ippcu_start, ippcu_end, group = values[8], values[9], values[10]
 
     win = tk.Toplevel(root)
     win.title("Редактировать клиента")
@@ -786,70 +923,27 @@ def edit_client():
 
     tk.Button(win, text="Сохранить", command=save_changes).grid(row=9, column=0, columnspan=2, pady=10)
 
-
-    def save_edit():
-        new_last = e_last.get().strip()
-        new_first = e_first.get().strip()
-        new_middle = e_middle.get().strip()
-        new_dob = e_dob.get_date().strftime("%Y-%m-%d")
-        new_phone = e_phone.get().strip()
-        new_contract = e_contract.get().strip()
-        new_ippcu_start = e_ippcu_start.get_date().strftime("%Y-%m-%d")
-        new_ippcu_end = e_ippcu_end.get_date().strftime("%Y-%m-%d")
-        new_group = e_group.get().strip()
-
-        if not new_last or not new_first or not new_dob:
-            messagebox.showerror("Ошибка", "Поля 'Фамилия', 'Имя' и 'Дата рождения' обязательны!")
-            return
-
-        try:
-            # Обновление — перед этим можно проверить на дубль (если изменилось ФИО/ДР)
-            with sqlite3.connect(DB_NAME) as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    SELECT id FROM clients
-                    WHERE lower(last_name)=lower(?) AND lower(first_name)=lower(?) AND lower(COALESCE(middle_name,''))=lower(?) AND dob=? AND id<>?
-                    """,
-                    (new_last, new_first, new_middle or "", new_dob, cid)
-                )
-                if cur.fetchone():
-                    messagebox.showwarning("Дубликат", "Есть другой клиент с таким же ФИО и датой рождения.")
-                    return
-
-            update_client(cid, new_last, new_first, new_middle, new_dob, new_phone, new_contract, new_ippcu_start, new_ippcu_end, new_group)
-            refresh_tree()
-            win.destroy()
-        except Exception as e:
-            traceback.print_exc()
-            messagebox.showerror("Ошибка", f"Не удалось сохранить:\n{e}")
-
-    tk.Button(win, text="Сохранить изменения", command=save_edit).grid(row=9, column=0, columnspan=2, pady=10)
-
-
 def delete_selected():
     selected = tree.selection()
     if not selected:
         messagebox.showerror("Ошибка", "Выберите клиента для удаления")
         return
     item = tree.item(selected[0])
-    cid = item["values"][0]
+    cid = item["values"][1]
     if messagebox.askyesno("Удалить", "Точно удалить выбранного клиента?"):
         delete_client(cid)
         refresh_tree()
 
-
 def do_search():
-    query = search_entry.get().strip()
-    date_from = date_from_entry.get_date().strftime("%Y-%m-%d") if date_from_entry.get() else None
-    date_to = date_to_entry.get_date().strftime("%Y-%m-%d") if date_to_entry.get() else None
+    query = root.search_entry.get().strip()
+    date_from = root.date_from_entry.get_date().strftime("%Y-%m-%d") if root.date_from_entry.get() else None
+    date_to = root.date_to_entry.get_date().strftime("%Y-%m-%d") if root.date_to_entry.get() else None
 
     with sqlite3.connect(DB_NAME) as conn:
         cur = conn.cursor()
         q = (query or "").strip().lower()
         like = f"%{q}%"
 
-        # Основной запрос
         sql = """
             SELECT id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name
             FROM clients
@@ -865,7 +959,6 @@ def do_search():
         """
         params = [like, like, like, like, like, like, like]
 
-        # Фильтры по датам окончания
         if date_from:
             sql += " AND DATE(ippcu_end) >= DATE(?) "
             params.append(date_from)
@@ -881,59 +974,12 @@ def do_search():
 
     refresh_tree(results)
 
-
-
-# ================== MAIN ==================
-root = tk.Tk()
-root.title("Отделение дневного пребывания — Полустационарное обслуживание")
-root.iconbitmap("icon.ico")
-
-
-# Поиск + фильтры
-search_entry = tk.Entry(root, width=40)
-search_entry.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-tk.Button(root, text="Поиск", command=do_search).grid(row=0, column=1, padx=5, pady=5)
-
-tk.Label(root, text="Дата окончания ИППСУ:").grid(row=0, column=2, padx=5)
-date_from_entry = DateEntry(root, width=12, date_pattern="dd.mm.yyyy")
-date_from_entry.grid(row=0, column=3, padx=5)
-date_to_entry = DateEntry(root, width=12, date_pattern="dd.mm.yyyy")
-date_to_entry.grid(row=0, column=4, padx=5)
-tk.Button(root, text="Фильтр", command=do_search).grid(row=0, column=5, padx=5)
-
-# ================== Таблица ==================
-tree = ttk.Treeview(
-    root,
-    columns=("✓", "ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
-             "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
-    show="headings",
-    height=20
-)
-tree.grid(row=1, column=0, columnspan=7, padx=5, pady=5, sticky="nsew")
-
-for col in tree["columns"]:
-    tree.heading(col, text=col)
-
-# Цветовые теги
-tree.tag_configure("expired", background="#ffcccc")
-tree.tag_configure("soon", background="#fff2cc")
-tree.tag_configure("active", background="#ccffcc")
-
-# ==== ДОБАВЬТЕ ЭТИ 2 СТРОКИ ====
-# КОНТЕКСТНОЕ МЕНЮ (правый клик)
-tree.bind("<Button-3>", show_context_menu)
-
-# ==== ИНИЦИАЛИЗАЦИЯ КОЛОНОК ====
-setup_initial_columns(tree)
-setup_tree_behavior(tree)
-
-# ==== обработчик для чекбоксов ====
 def toggle_check(event):
     region = tree.identify("region", event.x, event.y)
     if region != "cell":
         return
     col = tree.identify_column(event.x)
-    if col != "#1":  # первая колонка ("✓")
+    if col != "#1":
         return
 
     row_id = tree.identify_row(event.y)
@@ -941,29 +987,65 @@ def toggle_check(event):
         return
 
     values = list(tree.item(row_id, "values"))
-    current = values[0]  # колонка "✓"
+    current = values[0]
     values[0] = "X" if current.strip() == "" else " "
     tree.item(row_id, values=values)
     if hasattr(root, 'update_word_count'):
         root.update_word_count()
 
+# ================== MAIN ==================
+root = tk.Tk()
+root.title("Отделение дневного пребывания")
+root.geometry("1400x900")
+
+bg_color, accent_color, text_color = setup_macos_style()
+root.configure(bg=bg_color)
+
+header_frame = create_header(root, bg_color, accent_color)
+search_entry, date_from_entry, date_to_entry, search_frame = create_search_frame(root, bg_color)
+buttons_frame = create_buttons_frame(root, bg_color)
+
+root.search_entry = search_entry
+root.date_from_entry = date_from_entry
+root.date_to_entry = date_to_entry
+
+table_frame = tk.Frame(root, bg=bg_color)
+table_frame.grid(row=3, column=0, columnspan=8, padx=10, pady=10, sticky='nsew')
+
+tree_scroll = ttk.Scrollbar(table_frame)
+tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+tree = ttk.Treeview(
+    table_frame,
+    columns=("✓", "ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
+             "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
+    show="headings",
+    height=20,
+    yscrollcommand=tree_scroll.set
+)
+tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+tree_scroll.config(command=tree.yview)
+
+for col in tree["columns"]:
+    tree.heading(col, text=col)
+
+tree.tag_configure("expired", background='#ff3b30')
+tree.tag_configure("soon", background='#ffcc00')
+tree.tag_configure("active", background='#4cd964')
+
+tree.bind("<Button-3>", show_context_menu)
 tree.bind("<Button-1>", toggle_check)
 
-# Кнопки
-tk.Button(root, text="Добавить", command=add_window).grid(row=2, column=0, padx=5, pady=5)
-tk.Button(root, text="Редактировать", command=edit_client).grid(row=2, column=1, padx=5, pady=5)
-tk.Button(root, text="Удалить", command=delete_selected).grid(row=2, column=2, padx=5, pady=5)
-tk.Button(root, text="Быстрый просмотр", command=lambda: quick_view(tree.item(tree.selection()[0], "values")[1] if tree.selection() else None)).grid(row=2, column=3, padx=5, pady=5)
-tk.Button(root, text="Импорт Google Sheets", command=import_from_gsheet).grid(row=2, column=4, padx=5, pady=5)
-tk.Button(root, text="Экспорт в Word", command=export_selected_to_word).grid(row=2, column=5, padx=5, pady=5)
-tk.Button(root, text="Автоподбор колонок", command=lambda: auto_resize_columns(tree)).grid(row=2, column=6, padx=5, pady=5)
+setup_initial_columns(tree)
+setup_tree_behavior(tree)
 
-root.grid_rowconfigure(1, weight=1)
+create_status_bar()
+
+root.grid_rowconfigure(3, weight=1)
 root.grid_columnconfigure(0, weight=1)
 
 init_db()
 root.after(200, refresh_tree)
-
-create_status_bar()
+root.after(1000, check_expiring_ippcu)
 
 root.mainloop()
