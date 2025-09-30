@@ -9,10 +9,12 @@ from google.oauth2.service_account import Credentials
 import os
 import json
 import sys
+import updater
 from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from tkinter import simpledialog
+
 
 # ================== Пути ==================
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyApp")
@@ -858,9 +860,11 @@ def import_from_gsheet():
 
 # ================== UI ==================
 def refresh_tree(results=None):
+    # очищаем таблицу
     for row in tree.get_children():
         tree.delete(row)
 
+    # если нет результатов — берём все записи
     if results is None:
         results = get_all_clients(limit=200)
 
@@ -874,25 +878,26 @@ def refresh_tree(results=None):
             if ippcu_end:
                 end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
                 if end_date < today:
-                    tag = "expired"
-                elif today <= end_date <= soon:
-                    tag = "soon"
+                    tag = "expired"   # срок истёк
+                elif end_date <= soon:
+                    tag = "soon"      # истекает скоро
                 else:
-                    tag = "active"
+                    tag = "active"    # ещё действует
         except Exception:
-            pass
+            tag = ""
 
-        tree.insert("", "end", values=(
-            " ",
-            cid, last or "", first or "", middle or "",
-            dob or "", phone or "", contract or "",
-            ippcu_start or "", ippcu_end or "", group or ""
-        ), tags=(tag,))
-    
-    # Обновляем цветовые теги для нового стиля
-    tree.tag_configure("expired", background='#FFEBEE')  # Светло-красный
-    tree.tag_configure("soon", background='#FFF3E0')     # Светло-оранжевый
-    tree.tag_configure("active", background='#E8F5E8')   # Светло-зеленый
+        tree.insert(
+            "",
+            "end",
+            values=(" ", cid, last, first, middle, dob, phone, contract, ippcu_start, ippcu_end, group),
+            tags=(tag,)
+        )
+
+    # оформление цветом
+    tree.tag_configure("expired", background="#F8D7DA")   # красный (просрочен)
+    tree.tag_configure("soon", background="#FFF3CD")      # жёлтый (скоро истечёт)
+    tree.tag_configure("active", background="#D4EDDA")    # зелёный (активный)
+
     
     root.after(100, lambda: auto_resize_columns(tree))
 
@@ -1105,7 +1110,10 @@ def main():
     init_db()
     root.after(200, refresh_tree)
     root.after(1000, check_expiring_ippcu)
-    
+
+    # при старте проверяем обновления
+    root.after(100, updater.auto_update)
+
     root.mainloop()
 
 if __name__ == "__main__":
