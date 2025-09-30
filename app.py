@@ -21,116 +21,245 @@ os.makedirs(APP_DIR, exist_ok=True)
 DB_NAME = os.path.join(APP_DIR, "clients.db")
 SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
 
-# ================== macOS СТИЛЬ ==================
-def setup_macos_style():
-    """Настройка macOS-стиля для приложения"""
+# ================== СОВРЕМЕННЫЙ СТИЛЬ ==================
+class ModernStyle:
+    COLORS = {
+        'primary': '#2E86AB',
+        'primary_dark': '#1A5A7A',
+        'secondary': '#A23B72',
+        'accent': '#F18F01',
+        'success': '#4CAF50',
+        'warning': '#FF9800',
+        'error': '#F44336',
+        'background': '#F8F9FA',
+        'surface': '#FFFFFF',
+        'text_primary': '#212529',
+        'text_secondary': '#6C757D',
+        'border': '#DEE2E6'
+    }
+    
+    FONTS = {
+        'h1': ('Segoe UI', 20, 'bold'),
+        'h2': ('Segoe UI', 16, 'bold'),
+        'h3': ('Segoe UI', 14, 'bold'),
+        'body': ('Segoe UI', 11),
+        'small': ('Segoe UI', 10),
+        'button': ('Segoe UI', 11, 'bold')
+    }
+
+def setup_modern_style():
+    """Настройка современного стиля"""
     style = ttk.Style()
     
     try:
-        style.theme_use('aqua')
+        style.theme_use('vista')
     except:
         try:
             style.theme_use('clam')
         except:
             pass
     
-    bg_color = '#f5f5f7'
-    accent_color = '#007AFF'
-    text_color = '#1d1d1f'
+    # Настраиваем стили
+    style.configure('Modern.TFrame', background=ModernStyle.COLORS['background'])
+    style.configure('Modern.TLabel', background=ModernStyle.COLORS['background'], 
+                   foreground=ModernStyle.COLORS['text_primary'], font=ModernStyle.FONTS['body'])
+    style.configure('Primary.TButton', background=ModernStyle.COLORS['primary'], 
+                   foreground='white', font=ModernStyle.FONTS['button'], borderwidth=0)
+    style.configure('Secondary.TButton', background=ModernStyle.COLORS['surface'], 
+                   foreground=ModernStyle.COLORS['primary'], font=ModernStyle.FONTS['button'])
     
-    style.configure('TFrame', background=bg_color)
-    style.configure('TLabel', background=bg_color, foreground=text_color)
-    style.configure('TButton', font=('System', 12), padding=(15, 8))
-    style.configure('Accent.TButton', background=accent_color, foreground='white')
-    style.configure('Treeview', background='white', fieldbackground='white', foreground=text_color)
-    style.configure('Treeview.Heading', background='#e8e8ed', foreground=text_color, font=('System', 12, 'bold'))
-    style.map('Treeview', background=[('selected', accent_color)])
+    style.map('Primary.TButton',
+              background=[('active', ModernStyle.COLORS['primary_dark']),
+                         ('pressed', ModernStyle.COLORS['primary_dark'])])
     
-    return bg_color, accent_color, text_color
+    style.map('Secondary.TButton',
+              background=[('active', ModernStyle.COLORS['border']),
+                         ('pressed', ModernStyle.COLORS['border'])])
+    
+    # Стиль для Treeview
+    style.configure('Modern.Treeview', 
+                   background=ModernStyle.COLORS['surface'],
+                   fieldbackground=ModernStyle.COLORS['surface'],
+                   foreground=ModernStyle.COLORS['text_primary'],
+                   font=ModernStyle.FONTS['body'],
+                   rowheight=25)
+    
+    style.configure('Modern.Treeview.Heading', 
+                   background=ModernStyle.COLORS['primary'],
+                   foreground='white',
+                   font=ModernStyle.FONTS['button'],
+                   relief='flat')
+    
+    style.map('Modern.Treeview', 
+              background=[('selected', ModernStyle.COLORS['primary'])],
+              foreground=[('selected', 'white')])
 
-def create_header(root, bg_color, accent_color):
-    """Создание заголовка в macOS-стиле"""
-    header_frame = tk.Frame(root, bg=accent_color, height=60)
-    header_frame.grid(row=0, column=0, columnspan=8, sticky='ew')
-    header_frame.grid_propagate(False)
+def create_modern_header(root):
+    """Создание современного заголовка"""
+    header_frame = tk.Frame(root, bg=ModernStyle.COLORS['primary'], height=80)
+    header_frame.pack(fill='x', padx=0, pady=0)
     
-    title_label = tk.Label(header_frame, 
+    # Основной заголовок
+    title_frame = tk.Frame(header_frame, bg=ModernStyle.COLORS['primary'])
+    title_frame.pack(fill='x', padx=20, pady=12)
+    
+    title_label = tk.Label(title_frame, 
                           text="Отделение дневного пребывания",
-                          bg=accent_color,
+                          bg=ModernStyle.COLORS['primary'],
                           fg='white',
-                          font=('System', 18, 'bold'))
-    title_label.pack(side=tk.LEFT, padx=20, pady=15)
+                          font=ModernStyle.FONTS['h1'])
+    title_label.pack(side='left')
     
-    subtitle_label = tk.Label(header_frame,
+    subtitle_label = tk.Label(title_frame,
                              text="Полустационарное обслуживание",
-                             bg=accent_color,
+                             bg=ModernStyle.COLORS['primary'],
                              fg='white',
-                             font=('System', 12))
-    subtitle_label.pack(side=tk.LEFT, padx=0, pady=15)
+                             font=ModernStyle.FONTS['h3'])
+    subtitle_label.pack(side='left', padx=(15, 0))
     
     return header_frame
 
-def create_modern_button(parent, text, command, accent=False, width=15):
-    """Создание современной кнопки в macOS-стиле"""
-    style = 'Accent.TButton' if accent else 'TButton'
-    btn = ttk.Button(parent, text=text, command=command, style=style, width=width)
-    return btn
-
-def create_search_frame(root, bg_color):
-    """Создание панели поиска в macOS-стиле"""
-    search_frame = tk.Frame(root, bg=bg_color, padx=10, pady=10)
-    search_frame.grid(row=1, column=0, columnspan=8, sticky='ew', padx=10, pady=5)
+def create_search_panel(root):
+    """Создание панели поиска"""
+    search_frame = tk.Frame(root, bg=ModernStyle.COLORS['background'], padx=20, pady=15)
+    search_frame.pack(fill='x', padx=0, pady=0)
     
-    tk.Label(search_frame, text="🔍 Поиск:", bg=bg_color, 
-             font=('System', 11)).grid(row=0, column=0, padx=(0,5), pady=5)
+    # Поисковая строка
+    search_container = tk.Frame(search_frame, bg=ModernStyle.COLORS['surface'], 
+                               relief='solid', bd=1, padx=10, pady=8)
+    search_container.pack(fill='x', padx=0, pady=0)
     
-    search_entry = tk.Entry(search_frame, width=40, font=('System', 11),
-                           relief='flat', bg='white', bd=1)
-    search_entry.grid(row=0, column=1, padx=5, pady=5)
+    tk.Label(search_container, text="🔍 Поиск клиентов:", 
+             bg=ModernStyle.COLORS['surface'],
+             fg=ModernStyle.COLORS['text_primary'],
+             font=ModernStyle.FONTS['h3']).pack(side='left', padx=(0, 10))
     
-    search_btn = create_modern_button(search_frame, "Найти", lambda: do_search())
-    search_btn.grid(row=0, column=2, padx=5, pady=5)
+    search_entry = tk.Entry(search_container, width=40, font=ModernStyle.FONTS['body'],
+                           relief='flat', bg=ModernStyle.COLORS['background'], bd=0)
+    search_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
     
-    tk.Label(search_frame, text="Дата окончания ИППСУ:", bg=bg_color,
-             font=('System', 11)).grid(row=0, column=3, padx=(20,5), pady=5)
+    search_btn = ttk.Button(search_container, text="Найти", style='Primary.TButton',
+                           command=lambda: do_search())
+    search_btn.pack(side='left', padx=(0, 20))
     
-    date_from_entry = DateEntry(search_frame, width=12, date_pattern="dd.mm.yyyy",
-                               font=('System', 10))
-    date_from_entry.grid(row=0, column=4, padx=5, pady=5)
+    # Фильтры по датам
+    filters_frame = tk.Frame(search_container, bg=ModernStyle.COLORS['surface'])
+    filters_frame.pack(side='left')
     
-    tk.Label(search_frame, text="по", bg=bg_color,
-             font=('System', 11)).grid(row=0, column=5, padx=5, pady=5)
+    tk.Label(filters_frame, text="ИППСУ до:", 
+             bg=ModernStyle.COLORS['surface'],
+             fg=ModernStyle.COLORS['text_secondary'],
+             font=ModernStyle.FONTS['small']).pack(side='left', padx=(0, 5))
     
-    date_to_entry = DateEntry(search_frame, width=12, date_pattern="dd.mm.yyyy",
-                             font=('System', 10))
-    date_to_entry.grid(row=0, column=6, padx=5, pady=5)
+    date_from_entry = DateEntry(filters_frame, width=10, date_pattern="dd.mm.yyyy",
+                               font=ModernStyle.FONTS['small'], background=ModernStyle.COLORS['primary'],
+                               foreground='white', borderwidth=0)
+    date_from_entry.pack(side='left', padx=(0, 10))
     
-    filter_btn = create_modern_button(search_frame, "Фильтр", lambda: do_search())
-    filter_btn.grid(row=0, column=7, padx=5, pady=5)
+    tk.Label(filters_frame, text="–", 
+             bg=ModernStyle.COLORS['surface'],
+             fg=ModernStyle.COLORS['text_secondary'],
+             font=ModernStyle.FONTS['small']).pack(side='left', padx=(0, 10))
+    
+    date_to_entry = DateEntry(filters_frame, width=10, date_pattern="dd.mm.yyyy",
+                             font=ModernStyle.FONTS['small'], background=ModernStyle.COLORS['primary'],
+                             foreground='white', borderwidth=0)
+    date_to_entry.pack(side='left', padx=(0, 10))
+    
+    filter_btn = ttk.Button(filters_frame, text="Применить", style='Secondary.TButton',
+                           command=lambda: do_search())
+    filter_btn.pack(side='left')
     
     return search_entry, date_from_entry, date_to_entry, search_frame
 
-def create_buttons_frame(root, bg_color):
-    """Создание панели кнопок в macOS-стиле"""
-    buttons_frame = tk.Frame(root, bg=bg_color, padx=10, pady=10)
-    buttons_frame.grid(row=2, column=0, columnspan=8, sticky='ew', padx=10, pady=5)
+def create_toolbar(root):
+    """Создание панели инструментов"""
+    toolbar_frame = tk.Frame(root, bg=ModernStyle.COLORS['surface'], padx=20, pady=10)
+    toolbar_frame.pack(fill='x', padx=0, pady=0)
     
     buttons = [
-        ("➕ Добавить", add_window),
-        ("✏️ Редактировать", edit_client),
-        ("🗑️ Удалить", delete_selected),
-        ("👁️ Быстрый просмотр", lambda: quick_view(tree.item(tree.selection()[0], "values")[1] if tree.selection() else None)),
-        ("📥 Импорт Sheets", import_from_gsheet),
-        ("📄 Экспорт в Word", export_selected_to_word),
-        ("📏 Автоподбор", lambda: auto_resize_columns(tree)),
-        ("📊 Статистика", show_statistics)
+        ("➕ Добавить клиента", add_window, 'Primary.TButton'),
+        ("✏️ Редактировать", edit_client, 'Secondary.TButton'),
+        ("🗑️ Удалить", delete_selected, 'Secondary.TButton'),
+        ("👁️ Просмотр", lambda: quick_view(tree.item(tree.selection()[0], "values")[1] if tree.selection() else None), 'Secondary.TButton'),
+        ("📥 Импорт", import_from_gsheet, 'Secondary.TButton'),
+        ("📄 Экспорт в Word", export_selected_to_word, 'Secondary.TButton'),
+        ("📊 Статистика", show_statistics, 'Secondary.TButton')
     ]
     
-    for i, (text, command) in enumerate(buttons):
-        btn = create_modern_button(buttons_frame, text, command, accent=(i == 0))
-        btn.grid(row=0, column=i, padx=3, pady=5)
+    for text, command, style_name in buttons:
+        btn = ttk.Button(toolbar_frame, text=text, command=command, style=style_name)
+        btn.pack(side='left', padx=(0, 8))
     
-    return buttons_frame
+    return toolbar_frame
+
+def create_modern_table(root):
+    """Создание современной таблицы"""
+    table_container = tk.Frame(root, bg=ModernStyle.COLORS['background'], padx=20, pady=15)
+    table_container.pack(fill='both', expand=True, padx=0, pady=0)
+    
+    # Заголовок таблицы
+    table_header = tk.Frame(table_container, bg=ModernStyle.COLORS['background'])
+    table_header.pack(fill='x', pady=(0, 10))
+    
+    tk.Label(table_header, text="Список клиентов", 
+             bg=ModernStyle.COLORS['background'],
+             fg=ModernStyle.COLORS['text_primary'],
+             font=ModernStyle.FONTS['h2']).pack(side='left')
+    
+    # Контейнер для таблицы с тенью
+    table_wrapper = tk.Frame(table_container, bg=ModernStyle.COLORS['border'], 
+                            relief='solid', bd=1, padx=1, pady=1)
+    table_wrapper.pack(fill='both', expand=True)
+    
+    # Создаем таблицу с прокруткой
+    tree_scroll = ttk.Scrollbar(table_wrapper)
+    tree_scroll.pack(side='right', fill='y')
+    
+    tree = ttk.Treeview(
+        table_wrapper,
+        columns=("✓", "ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
+                 "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
+        show="headings",
+        height=15,
+        style='Modern.Treeview',
+        yscrollcommand=tree_scroll.set
+    )
+    tree.pack(side='left', fill='both', expand=True)
+    tree_scroll.config(command=tree.yview)
+    
+    # Настраиваем колонки
+    for col in tree["columns"]:
+        tree.heading(col, text=col)
+    
+    return tree, table_container
+
+def create_status_bar(root):
+    """Создание строки статуса"""
+    status_frame = tk.Frame(root, bg=ModernStyle.COLORS['primary'], height=30)
+    status_frame.pack(fill='x', side='bottom', padx=0, pady=0)
+    status_frame.pack_propagate(False)
+    
+    status_label = tk.Label(status_frame, text="Готово", 
+                           bg=ModernStyle.COLORS['primary'],
+                           fg='white', font=ModernStyle.FONTS['small'])
+    status_label.pack(side='left', padx=10, pady=5)
+    
+    word_count_label = tk.Label(status_frame, text="Выбрано для Word: 0", 
+                               bg=ModernStyle.COLORS['primary'],
+                               fg='white', font=ModernStyle.FONTS['small'])
+    word_count_label.pack(side='right', padx=10, pady=5)
+    
+    root.status_label = status_label
+    root.word_count_label = word_count_label
+    
+    def update_word_count():
+        count = sum(1 for row_id in tree.get_children() 
+                   if tree.item(row_id, "values")[0] == "X")
+        word_count_label.config(text=f"Выбрано для Word: {count}")
+    
+    root.update_word_count = update_word_count
+    return status_frame
 
 # ----------------------
 # --- Утилиты ФИО ------
@@ -265,28 +394,6 @@ def show_status_message(message, duration=3000):
     if hasattr(root, 'status_label'):
         root.status_label.config(text=message)
         root.after(duration, lambda: root.status_label.config(text="Готово"))
-
-def create_status_bar():
-    """Создать строку статуса"""
-    status_frame = tk.Frame(root, relief=tk.SUNKEN, bd=1)
-    status_frame.grid(row=10, column=0, columnspan=8, sticky="we")
-    
-    status_label = tk.Label(status_frame, text="Готово", anchor="w")
-    status_label.pack(side=tk.LEFT, fill=tk.X, padx=5)
-    
-    word_count_label = tk.Label(status_frame, text="Выбрано для Word: 0", anchor="e")
-    word_count_label.pack(side=tk.RIGHT, padx=5)
-    
-    root.status_label = status_label
-    root.word_count_label = word_count_label
-    
-    def update_word_count():
-        count = sum(1 for row_id in tree.get_children() 
-                   if tree.item(row_id, "values")[0] == "X")
-        word_count_label.config(text=f"Выбрано для Word: {count}")
-    
-    root.update_word_count = update_word_count
-    root.after(100, update_word_count)
 
 # ================== Автоподбор колонок ==================
 def auto_resize_columns(tree, max_width=400):
@@ -782,58 +889,48 @@ def refresh_tree(results=None):
             ippcu_start or "", ippcu_end or "", group or ""
         ), tags=(tag,))
     
+    # Обновляем цветовые теги для нового стиля
+    tree.tag_configure("expired", background='#FFEBEE')  # Светло-красный
+    tree.tag_configure("soon", background='#FFF3E0')     # Светло-оранжевый
+    tree.tag_configure("active", background='#E8F5E8')   # Светло-зеленый
+    
     root.after(100, lambda: auto_resize_columns(tree))
 
 def add_window():
     win = tk.Toplevel()
     win.title("Добавить обслуживаемого")
+    win.configure(bg=ModernStyle.COLORS['background'])
 
-    tk.Label(win, text="Фамилия").grid(row=0, column=0, padx=10, pady=5, sticky="w")
-    e_last = tk.Entry(win, width=30)
-    e_last.grid(row=0, column=1, padx=10, pady=5)
+    fields = [
+        ("Фамилия", 0), ("Имя", 1), ("Отчество", 2),
+        ("Дата рождения", 3), ("Телефон", 4), ("Номер договора", 5),
+        ("Дата начала ИППСУ", 6), ("Дата окончания ИППСУ", 7), ("Группа", 8)
+    ]
 
-    tk.Label(win, text="Имя").grid(row=1, column=0, padx=10, pady=5, sticky="w")
-    e_first = tk.Entry(win, width=30)
-    e_first.grid(row=1, column=1, padx=10, pady=5)
-
-    tk.Label(win, text="Отчество").grid(row=2, column=0, padx=10, pady=5, sticky="w")
-    e_middle = tk.Entry(win, width=30)
-    e_middle.grid(row=2, column=1, padx=10, pady=5)
-
-    tk.Label(win, text="Дата рождения").grid(row=3, column=0, padx=10, pady=5, sticky="w")
-    e_dob = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
-    e_dob.grid(row=3, column=1, padx=10, pady=5)
-
-    tk.Label(win, text="Телефон").grid(row=4, column=0, padx=10, pady=5, sticky="w")
-    e_phone = tk.Entry(win, width=30)
-    e_phone.grid(row=4, column=1, padx=10, pady=5)
-
-    tk.Label(win, text="Номер договора").grid(row=5, column=0, padx=10, pady=5, sticky="w")
-    e_contract = tk.Entry(win, width=30)
-    e_contract.grid(row=5, column=1, padx=10, pady=5)
-
-    tk.Label(win, text="Дата начала ИППСУ").grid(row=6, column=0, padx=10, pady=5, sticky="w")
-    e_ippcu_start = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
-    e_ippcu_start.grid(row=6, column=1, padx=10, pady=5)
-
-    tk.Label(win, text="Дата окончания ИППСУ").grid(row=7, column=0, padx=10, pady=5, sticky="w")
-    e_ippcu_end = DateEntry(win, width=27, date_pattern="dd.mm.yyyy")
-    e_ippcu_end.grid(row=7, column=1, padx=10, pady=5)
-
-    tk.Label(win, text="Группа").grid(row=8, column=0, padx=10, pady=5, sticky="w")
-    e_group = tk.Entry(win, width=30)
-    e_group.grid(row=8, column=1, padx=10, pady=5)
+    entries = {}
+    for field, row in fields:
+        tk.Label(win, text=field, bg=ModernStyle.COLORS['background'],
+                fg=ModernStyle.COLORS['text_primary'], font=ModernStyle.FONTS['body']).grid(row=row, column=0, padx=10, pady=5, sticky="w")
+        
+        if "Дата" in field:
+            entry = DateEntry(win, width=27, date_pattern="dd.mm.yyyy",
+                            font=ModernStyle.FONTS['body'])
+        else:
+            entry = tk.Entry(win, width=30, font=ModernStyle.FONTS['body'])
+        
+        entry.grid(row=row, column=1, padx=10, pady=5)
+        entries[field] = entry
 
     def save_client():
-        last = e_last.get().strip()
-        first = e_first.get().strip()
-        middle = e_middle.get().strip()
-        dob = e_dob.get_date().strftime("%Y-%m-%d")
-        phone = e_phone.get().strip()
-        contract_number = e_contract.get().strip()
-        ippcu_start = e_ippcu_start.get_date().strftime("%Y-%m-%d")
-        ippcu_end = e_ippcu_end.get_date().strftime("%Y-%m-%d")
-        group = e_group.get().strip()
+        last = entries["Фамилия"].get().strip()
+        first = entries["Имя"].get().strip()
+        middle = entries["Отчество"].get().strip()
+        dob = entries["Дата рождения"].get_date().strftime("%Y-%m-%d")
+        phone = entries["Телефон"].get().strip()
+        contract_number = entries["Номер договора"].get().strip()
+        ippcu_start = entries["Дата начала ИППСУ"].get_date().strftime("%Y-%m-%d")
+        ippcu_end = entries["Дата окончания ИППСУ"].get_date().strftime("%Y-%m-%d")
+        group = entries["Группа"].get().strip()
 
         if not last or not first or not dob:
             messagebox.showerror("Ошибка", "Поля 'Фамилия', 'Имя' и 'Дата рождения' обязательны!")
@@ -849,7 +946,8 @@ def add_window():
             traceback.print_exc()
             messagebox.showerror("Ошибка", f"Не удалось добавить:\n{e}")
 
-    tk.Button(win, text="Сохранить", command=save_client).grid(row=9, column=0, columnspan=2, pady=10)
+    save_btn = ttk.Button(win, text="Сохранить", style='Primary.TButton', command=save_client)
+    save_btn.grid(row=9, column=0, columnspan=2, pady=10)
 
 def edit_client():
     """Окно редактирования клиента"""
@@ -867,61 +965,39 @@ def edit_client():
 
     win = tk.Toplevel(root)
     win.title("Редактировать клиента")
+    win.configure(bg=ModernStyle.COLORS['background'])
 
-    tk.Label(win, text="Фамилия").grid(row=0, column=0)
-    last_entry = tk.Entry(win)
-    last_entry.insert(0, last)
-    last_entry.grid(row=0, column=1)
+    fields = [
+        ("Фамилия", last, 0), ("Имя", first, 1), ("Отчество", middle, 2),
+        ("Дата рождения", dob, 3), ("Телефон", phone, 4), ("Номер договора", contract, 5),
+        ("Дата начала ИППСУ", ippcu_start, 6), ("Дата окончания ИППСУ", ippcu_end, 7), ("Группа", group, 8)
+    ]
 
-    tk.Label(win, text="Имя").grid(row=1, column=0)
-    first_entry = tk.Entry(win)
-    first_entry.insert(0, first)
-    first_entry.grid(row=1, column=1)
-
-    tk.Label(win, text="Отчество").grid(row=2, column=0)
-    middle_entry = tk.Entry(win)
-    middle_entry.insert(0, middle)
-    middle_entry.grid(row=2, column=1)
-
-    tk.Label(win, text="Дата рождения (ГГГГ-ММ-ДД)").grid(row=3, column=0)
-    dob_entry = tk.Entry(win)
-    dob_entry.insert(0, dob)
-    dob_entry.grid(row=3, column=1)
-
-    tk.Label(win, text="Телефон").grid(row=4, column=0)
-    phone_entry = tk.Entry(win)
-    phone_entry.insert(0, phone)
-    phone_entry.grid(row=4, column=1)
-
-    tk.Label(win, text="Номер договора").grid(row=5, column=0)
-    contract_entry = tk.Entry(win)
-    contract_entry.insert(0, contract)
-    contract_entry.grid(row=5, column=1)
-
-    tk.Label(win, text="Дата начала ИППСУ").grid(row=6, column=0)
-    start_entry = tk.Entry(win)
-    start_entry.insert(0, ippcu_start)
-    start_entry.grid(row=6, column=1)
-
-    tk.Label(win, text="Дата окончания ИППСУ").grid(row=7, column=0)
-    end_entry = tk.Entry(win)
-    end_entry.insert(0, ippcu_end)
-    end_entry.grid(row=7, column=1)
-
-    tk.Label(win, text="Группа").grid(row=8, column=0)
-    group_entry = tk.Entry(win)
-    group_entry.insert(0, group)
-    group_entry.grid(row=8, column=1)
+    entries = {}
+    for field, value, row in fields:
+        tk.Label(win, text=field, bg=ModernStyle.COLORS['background'],
+                fg=ModernStyle.COLORS['text_primary'], font=ModernStyle.FONTS['body']).grid(row=row, column=0, padx=10, pady=5, sticky="w")
+        
+        if "Дата" in field:
+            entry = tk.Entry(win, width=30, font=ModernStyle.FONTS['body'])
+            entry.insert(0, value)
+        else:
+            entry = tk.Entry(win, width=30, font=ModernStyle.FONTS['body'])
+            entry.insert(0, value)
+        
+        entry.grid(row=row, column=1, padx=10, pady=5)
+        entries[field] = entry
 
     def save_changes():
         update_client(cid,
-                      last_entry.get(), first_entry.get(), middle_entry.get(),
-                      dob_entry.get(), phone_entry.get(), contract_entry.get(),
-                      start_entry.get(), end_entry.get(), group_entry.get())
+                      entries["Фамилия"].get(), entries["Имя"].get(), entries["Отчество"].get(),
+                      entries["Дата рождения"].get(), entries["Телефон"].get(), entries["Номер договора"].get(),
+                      entries["Дата начала ИППСУ"].get(), entries["Дата окончания ИППСУ"].get(), entries["Группа"].get())
         refresh_tree()
         win.destroy()
 
-    tk.Button(win, text="Сохранить", command=save_changes).grid(row=9, column=0, columnspan=2, pady=10)
+    save_btn = ttk.Button(win, text="Сохранить", style='Primary.TButton', command=save_changes)
+    save_btn.grid(row=9, column=0, columnspan=2, pady=10)
 
 def delete_selected():
     selected = tree.selection()
@@ -994,58 +1070,43 @@ def toggle_check(event):
         root.update_word_count()
 
 # ================== MAIN ==================
-root = tk.Tk()
-root.title("Отделение дневного пребывания")
-root.geometry("1400x900")
+def main():
+    global root, tree
+    
+    root = tk.Tk()
+    root.title("Отделение дневного пребывания - Полустационарное обслуживание")
+    root.geometry("1400x900")
+    
+    # Настройка современного стиля
+    setup_modern_style()
+    root.configure(bg=ModernStyle.COLORS['background'])
+    
+    # Создание интерфейса
+    header = create_modern_header(root)
+    search_entry, date_from_entry, date_to_entry, search_frame = create_search_panel(root)
+    toolbar = create_toolbar(root)
+    tree, table_container = create_modern_table(root)
+    status_bar = create_status_bar(root)
+    
+    # Сохраняем ссылки на элементы
+    root.search_entry = search_entry
+    root.date_from_entry = date_from_entry
+    root.date_to_entry = date_to_entry
+    
+    # Настройка таблицы
+    setup_initial_columns(tree)
+    setup_tree_behavior(tree)
+    
+    # Привязка событий
+    tree.bind("<Button-3>", show_context_menu)
+    tree.bind("<Button-1>", toggle_check)
+    
+    # Инициализация
+    init_db()
+    root.after(200, refresh_tree)
+    root.after(1000, check_expiring_ippcu)
+    
+    root.mainloop()
 
-bg_color, accent_color, text_color = setup_macos_style()
-root.configure(bg=bg_color)
-
-header_frame = create_header(root, bg_color, accent_color)
-search_entry, date_from_entry, date_to_entry, search_frame = create_search_frame(root, bg_color)
-buttons_frame = create_buttons_frame(root, bg_color)
-
-root.search_entry = search_entry
-root.date_from_entry = date_from_entry
-root.date_to_entry = date_to_entry
-
-table_frame = tk.Frame(root, bg=bg_color)
-table_frame.grid(row=3, column=0, columnspan=8, padx=10, pady=10, sticky='nsew')
-
-tree_scroll = ttk.Scrollbar(table_frame)
-tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-tree = ttk.Treeview(
-    table_frame,
-    columns=("✓", "ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
-             "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
-    show="headings",
-    height=20,
-    yscrollcommand=tree_scroll.set
-)
-tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-tree_scroll.config(command=tree.yview)
-
-for col in tree["columns"]:
-    tree.heading(col, text=col)
-
-tree.tag_configure("expired", background='#ff3b30')
-tree.tag_configure("soon", background='#ffcc00')
-tree.tag_configure("active", background='#4cd964')
-
-tree.bind("<Button-3>", show_context_menu)
-tree.bind("<Button-1>", toggle_check)
-
-setup_initial_columns(tree)
-setup_tree_behavior(tree)
-
-create_status_bar()
-
-root.grid_rowconfigure(3, weight=1)
-root.grid_columnconfigure(0, weight=1)
-
-init_db()
-root.after(200, refresh_tree)
-root.after(1000, check_expiring_ippcu)
-
-root.mainloop()
+if __name__ == "__main__":
+    main()
