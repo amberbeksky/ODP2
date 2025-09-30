@@ -124,6 +124,16 @@ def export_selected_to_word():
     except Exception as e:
         messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
+    # === ДОБАВЬТЕ ЭТОТ БЛОК В КОНЕЦ ФУНКЦИИ ===
+    # После экспорта сбрасываем галочки и обновляем счетчик
+    for row_id in tree.get_children():
+        values = list(tree.item(row_id, "values"))
+        if values[0] == "X":
+            values[0] = " "
+            tree.item(row_id, values=values)
+    
+    if hasattr(root, 'update_word_count'):
+        root.update_word_count()
 
 
 
@@ -223,7 +233,230 @@ def init_db():
             conn.commit()
         except Exception:
             pass
+            
+# ================== Контекстное меню ==================
+def show_context_menu(event):
+    """Показать контекстное меню по правому клику"""
+    item = tree.identify_row(event.y)
+    if not item:
+        return
+    
+    tree.selection_set(item)
+    context_menu = tk.Menu(root, tearoff=0)
+    
+    values = tree.item(item, "values")
+    client_id = values[1]
+    last_name = values[2]
+    first_name = values[3]
+    client_name = f"{last_name} {first_name}"
+    
+    context_menu.add_command(
+        label=f"Редактировать: {client_name}", 
+        command=edit_client
+    )
+    context_menu.add_command(
+        label=f"Удалить: {client_name}", 
+        command=delete_selected
+    )
+    context_menu.add_separator()
+    context_menu.add_command(
+        label="Быстрый просмотр", 
+        command=lambda: quick_view(client_id)
+    )
+    context_menu.add_command(
+        label="Скопировать ФИО", 
+        command=lambda: copy_to_clipboard(f"{last_name} {first_name} {values[4] or ''}".strip())
+    )
+    context_menu.add_command(
+        label="Скопировать телефон", 
+        command=lambda: copy_to_clipboard(values[6] or "")
+    )
+    context_menu.add_separator()
+    context_menu.add_command(
+        label="Добавить в список Word", 
+        command=lambda: add_to_word_list(item)
+    )
+    
+    try:
+        context_menu.tk_popup(event.x_root, event.y_root)
+    finally:
+        context_menu.grab_release()
 
+def quick_view(client_id):
+    """Быстрый просмотр информации о клиенте"""
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients WHERE id=?",
+            (client_id,)
+        )
+        client = cur.fetchone()
+    
+    if not client:
+        messagebox.showerror("Ошибка", "Клиент не найден")
+        return
+    
+    last, first, middle, dob, phone, contract, ippcu_start, ippcu_end, group = client
+    
+    info_text = f"""👤 {last} {first} {middle or ''}
+
+📅 Дата рождения: {dob or 'не указана'}
+📞 Телефон: {phone or 'не указан'}
+📄 Договор: {contract or 'не указан'}
+🏷️ Группа: {group or 'не указана'}
+
+📋 ИППСУ:
+   Начало: {ippcu_start or 'не указано'}
+   Окончание: {ippcu_end or 'не указано'}"""
+    
+    if ippcu_end:
+        try:
+            end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
+            today = datetime.today().date()
+            days_left = (end_date - today).days
+            
+            if days_left < 0:
+                info_text += f"\n\n⚠️ ИППСУ ПРОСРОЧЕН на {abs(days_left)} дн."
+            elif days_left <= 30:
+                info_text += f"\n\n⚠️ ИППСУ истекает через {days_left} дн."
+            else:
+                info_text += f"\n\n✅ ИППСУ активен ({days_left} дн. осталось)"
+        except:
+            pass
+    
+    messagebox.showinfo("Информация о клиенте", info_text)
+
+def copy_to_clipboard(text):
+    """Копировать текст в буфер обмена"""
+    if text:
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        show_status_message(f"Скопировано: {text[:20]}..." if len(text) > 20 else f"Скопировано: {text}")
+
+def add_to_word_list(item):
+    """Добавить/убрать клиента из списка для Word"""
+    values = list(tree.item(item, "values"))
+    values[0] = "X" if values[0].strip() == "" else " "
+    tree.item(item, values=values)
+    
+    action = "добавлен в" if values[0] == "X" else "удален из"
+    show_status_message(f"Клиент {action} списка для Word")
+
+def show_status_message(message, duration=3000):
+    """Показать временное сообщение в статусной строке"""
+    if hasattr(root, 'status_label'):
+        root.status_label.config(text=message)
+        root.after(duration, lambda: root.status_label.config(text="Готово"))
+
+def create_status_bar():
+    """Создать строку статуса"""
+    status_frame = tk.Frame(root, relief=tk.SUNKEN, bd=1)
+    status_frame.grid(row=10, column=0, columnspan=8, sticky="we")
+    
+    status_label = tk.Label(status_frame, text="Готово", anchor="w")
+    status_label.pack(side=tk.LEFT, fill=tk.X, padx=5)
+    
+    word_count_label = tk.Label(status_frame, text="Выбрано для Word: 0", anchor="e")
+    word_count_label.pack(side=tk.RIGHT, padx=5)
+    
+    root.status_label = status_label
+    root.word_count_label = word_count_label
+    
+    def update_word_count():
+        count = sum(1 for row_id in tree.get_children() 
+                   if tree.item(row_id, "values")[0] == "X")
+        word_count_label.config(text=f"Выбрано для Word: {count}")
+    
+    root.update_word_count = update_word_count
+    root.after(100, update_word_count)
+
+# ================== Автоподбор колонок ==================
+def auto_resize_columns(tree, max_width=400):
+    """Автоподбор ширины колонок с ограничением по максимальной ширине"""
+    tree.update_idletasks()
+    
+    # Определяем приоритеты колонок (какие должны быть шире)
+    column_priority = {
+        "Фамилия": 2, "Имя": 2, "Отчество": 2, 
+        "Дата рождения": 1, "Телефон": 1, "Номер договора": 1,
+        "Дата начала ИППСУ": 1, "Дата окончания ИППСУ": 1, "Группа": 1,
+        "✓": 0, "ID": 0  # Эти колонки делаем узкими
+    }
+    
+    for col in tree["columns"]:
+        # Ширина заголовка
+        header_text = tree.heading(col)["text"]
+        header_width = tk.font.Font().measure(header_text) + 30
+        
+        # Ширина по содержимому
+        content_width = header_width
+        for item in tree.get_children():
+            cell_value = str(tree.set(item, col))
+            cell_width = tk.font.Font().measure(cell_value) + 20
+            if cell_width > content_width:
+                content_width = cell_width
+        
+        # Учитываем приоритет колонки
+        priority = column_priority.get(header_text, 1)
+        if priority == 0:  # Узкие колонки
+            final_width = min(content_width, 80)
+        elif priority == 2:  # Широкие колонки (ФИО)
+            final_width = min(content_width, max_width)
+        else:  # Средние колонки
+            final_width = min(content_width, 150)
+        
+        tree.column(col, width=final_width, minwidth=30)
+
+def setup_tree_behavior(tree):
+    """Настройка поведения таблицы"""
+    
+    # Двойной клик на разделитель колонок - автоподбор
+    def on_header_click(event):
+        # Определяем, был ли клик на разделителе колонок
+        region = tree.identify("region", event.x, event.y)
+        if region == "separator":
+            column = tree.identify_column(event.x)
+            col_id = column.replace("#", "")
+            columns = tree["columns"]
+            if col_id.isdigit() and int(col_id) <= len(columns):
+                col_name = columns[int(col_id)-1]
+                auto_resize_single_column(tree, col_name)
+    
+    tree.bind("<Double-1>", on_header_click)
+
+def auto_resize_single_column(tree, col_name):
+    """Автоподбор ширины для одной колонки"""
+    tree.update_idletasks()
+    
+    # Ширина заголовка
+    header_text = tree.heading(col_name)["text"]
+    header_width = tk.font.Font().measure(header_text) + 30
+    
+    # Ширина по содержимому
+    content_width = header_width
+    for item in tree.get_children():
+        cell_value = str(tree.set(item, col_name))
+        cell_width = tk.font.Font().measure(cell_value) + 20
+        if cell_width > content_width:
+            content_width = cell_width
+    
+    final_width = min(content_width, 400)
+    tree.column(col_name, width=final_width)
+
+def setup_initial_columns(tree):
+    """Начальная настройка колонок"""
+    # Устанавливаем разумные начальные ширины
+    tree.column("✓", width=30, minwidth=20, stretch=False)
+    tree.column("ID", width=40, minwidth=30, stretch=False)
+    tree.column("Фамилия", width=120, minwidth=80)
+    tree.column("Имя", width=120, minwidth=80)
+    tree.column("Отчество", width=120, minwidth=80)
+    tree.column("Дата рождения", width=100, minwidth=80)
+    tree.column("Телефон", width=120, minwidth=80)
+    tree.column("Номер договора", width=120, minwidth=80)
+    tree.column("Дата начала ИППСУ", width=120, minwidth=80)
+    tree.column("Дата окончания ИППСУ", width=120, minwidth=80)
+    tree.column("Группа", width=100, minwidth=80)
 
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
@@ -402,6 +635,9 @@ def refresh_tree(results=None):
             dob or "", phone or "", contract or "",
             ippcu_start or "", ippcu_end or "", group or ""
         ), tags=(tag,))
+    
+    # Автоподбор ширины колонок после обновления данных
+    root.after(100, lambda: auto_resize_columns(tree))
 
 
 
@@ -683,6 +919,13 @@ tree.tag_configure("expired", background="#ffcccc")
 tree.tag_configure("soon", background="#fff2cc")
 tree.tag_configure("active", background="#ccffcc")
 
+# ==== ДОБАВЬТЕ ЭТИ 2 СТРОКИ ====
+# КОНТЕКСТНОЕ МЕНЮ (правый клик)
+tree.bind("<Button-3>", show_context_menu)
+
+# ==== ИНИЦИАЛИЗАЦИЯ КОЛОНОК ====
+setup_initial_columns(tree)
+setup_tree_behavior(tree)
 
 # ==== обработчик для чекбоксов ====
 def toggle_check(event):
@@ -701,7 +944,8 @@ def toggle_check(event):
     current = values[0]  # колонка "✓"
     values[0] = "X" if current.strip() == "" else " "
     tree.item(row_id, values=values)
-
+    if hasattr(root, 'update_word_count'):
+        root.update_word_count()
 
 tree.bind("<Button-1>", toggle_check)
 
@@ -709,13 +953,17 @@ tree.bind("<Button-1>", toggle_check)
 tk.Button(root, text="Добавить", command=add_window).grid(row=2, column=0, padx=5, pady=5)
 tk.Button(root, text="Редактировать", command=edit_client).grid(row=2, column=1, padx=5, pady=5)
 tk.Button(root, text="Удалить", command=delete_selected).grid(row=2, column=2, padx=5, pady=5)
-tk.Button(root, text="Импорт Google Sheets", command=import_from_gsheet).grid(row=2, column=3, padx=5, pady=5)
-tk.Button(root, text="Экспорт в Word", command=export_selected_to_word).grid(row=2, column=4, padx=5, pady=5)  # <--- новая кнопка
+tk.Button(root, text="Быстрый просмотр", command=lambda: quick_view(tree.item(tree.selection()[0], "values")[1] if tree.selection() else None)).grid(row=2, column=3, padx=5, pady=5)
+tk.Button(root, text="Импорт Google Sheets", command=import_from_gsheet).grid(row=2, column=4, padx=5, pady=5)
+tk.Button(root, text="Экспорт в Word", command=export_selected_to_word).grid(row=2, column=5, padx=5, pady=5)
+tk.Button(root, text="Автоподбор колонок", command=lambda: auto_resize_columns(tree)).grid(row=2, column=6, padx=5, pady=5)
 
 root.grid_rowconfigure(1, weight=1)
 root.grid_columnconfigure(0, weight=1)
 
 init_db()
 root.after(200, refresh_tree)
+
+create_status_bar()
 
 root.mainloop()
