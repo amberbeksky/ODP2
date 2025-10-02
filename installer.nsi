@@ -25,8 +25,6 @@ ShowUnInstDetails show
 
 !insertmacro MUI_LANGUAGE "Russian"
 
-!insertmacro MUI_RESERVEFILE_LANGDLL
-
 Icon "icon.ico"
 UninstallIcon "icon.ico"
 
@@ -35,15 +33,24 @@ Section "Install"
   
   ; Основное приложение
   File "dist\app.exe"
-  File "credentials.json"
   File "icon.ico"
-  File "readme.txt"
-  File "license.txt"
   
-  ; Создаем папку для логов
+  ; Опциональные файлы (создаем если нужно)
+  FileOpen $0 "$INSTDIR\readme.txt" w
+  FileWrite $0 "Отделение дневного пребывания - Полустационарное обслуживание$\r$\nВерсия ${VERSION}$\r$\n$\r$\nДля работы с Google Sheets необходим файл credentials.json"
+  FileClose $0
+  
+  FileOpen $1 "$INSTDIR\license.txt" w
+  FileWrite $1 "Лицензионное соглашение$\r$\n$\r$\nПрограмма предоставляется как есть."
+  FileClose $1
+  
+  ; Создаем пустой credentials.json если не существует
+  FileOpen $2 "$INSTDIR\credentials.json" w
+  FileWrite $2 "{}"
+  FileClose $2
+  
+  ; Создаем папки
   CreateDirectory "$INSTDIR\logs"
-  
-  ; Создаем папку для бэкапов
   CreateDirectory "$INSTDIR\backups"
 
   ; Ярлык на рабочий стол
@@ -64,13 +71,11 @@ Section "Install"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "Publisher" "${COMPANY}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayIcon" "$\"$INSTDIR\icon.ico$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "HelpLink" "http://www.example.com"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "URLInfoAbout" "http://www.example.com"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "HelpLink" "https://github.com/your-repo"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "URLInfoAbout" "https://github.com/your-repo"
   
-  ; Записываем размер установки
-  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
-  IntFmt $0 "0x%08X" $0
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "EstimatedSize" "$0"
+  ; Фиксированный размер (упрощенно для GitHub Actions)
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "EstimatedSize" "0x00010000"
   
 SectionEnd
 
@@ -103,7 +108,3 @@ Section "Uninstall"
   ; Сообщение о том, что данные пользователя сохранены
   MessageBox MB_OK|MB_ICONINFORMATION "Программа удалена.$\nВаши данные (база клиентов, настройки) сохранены в папке:$\n$APPDATA\MyApp"
 SectionEnd
-
-; Функция для получения размера папки
-!include "FileFunc.nsh"
-!insertmacro GetSize
