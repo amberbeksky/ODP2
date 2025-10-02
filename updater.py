@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 APP_VERSION = "2.0.0"  # <<< измени на номер своей текущей версии
-VERSION_URL = "VERSION_URL = "https://raw.githubusercontent.com/amberbeksky/ODP2/main/version.txt"
+VERSION_URL = "https://raw.githubusercontent.com/amberbeksky/ODP2/main/version.txt"
 APP_URL = "https://github.com/amberbeksky/ODP2/releases/latest/download/app.exe"
 APP_PATH = sys.argv[0]  # путь к текущему exe
 
