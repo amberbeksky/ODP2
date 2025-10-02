@@ -779,7 +779,7 @@ class NotificationSystem:
             )
     
     def add_notification(self, category, message, level="info"):
-        """Добавление уведомления"""
+        """Добавление уведомлений"""
         self.notifications.append({
             "timestamp": datetime.now(),
             "category": category,
@@ -894,7 +894,7 @@ class NotificationSystem:
 # Глобальный экземпляр системы уведомлений
 notification_system = NotificationSystem()
 
-    def show_notifications():
+def show_notifications():
     """Показать уведомления (вызывается из меню)"""
     notification_system.show_notification_window()
 
