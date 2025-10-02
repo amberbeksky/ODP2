@@ -730,223 +730,453 @@ def export_selected_to_word():
 
 # ================== СИСТЕМА УВЕДОМЛЕНИЙ ==================
 class NotificationSystem:
-    def __init__(self):
+    def __init__(self, db_path):
+        self.db_path = db_path
         self.notifications = []
-        self.setup_daily_checks()
+        self.is_initialized = False
+        
+    def initialize(self):
+        """Инициализация системы уведомлений (вызывается после инициализации БД)"""
+        try:
+            # Проверяем, что таблица существует
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='clients'")
+                if not cur.fetchone():
+                    print("Таблица clients не найдена, уведомления отключены")
+                    return False
+                    
+            self.setup_daily_checks()
+            self.is_initialized = True
+            return True
+        except Exception as e:
+            print(f"Ошибка инициализации системы уведомлений: {e}")
+            return False
     
     def setup_daily_checks(self):
         """Настройка ежедневных проверок"""
         self.check_birthdays()
         self.check_ippcu_expiry()
         self.check_empty_contracts()
+        self.check_upcoming_reviews()
     
     def check_birthdays(self):
         """Проверка ближайших дней рождений"""
-        today = datetime.today().date()
-        next_week = today + timedelta(days=7)
-        
-        with sqlite3.connect(DB_NAME) as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT last_name, first_name, middle_name, dob 
-                FROM clients 
-                WHERE substr(dob, 6, 5) BETWEEN ? AND ?
-            """, (today.strftime("%m-%d"), next_week.strftime("%m-%d")))
+        try:
+            today = datetime.today().date()
+            next_week = today + timedelta(days=30)  # Увеличим до 30 дней
             
-            birthdays = cur.fetchall()
-        
-        for last, first, middle, dob in birthdays:
-            try:
-                bday = datetime.strptime(dob, "%Y-%m-%d").date()
-                bday_this_year = bday.replace(year=today.year)
-                days_until = (bday_this_year - today).days
-                if days_until >= 0:
-                    self.add_notification(
-                        "birthday", 
-                        f"День рождения у {last} {first} {middle or ''} через {days_until} дн. ({bday.strftime('%d.%m.%Y')})",
-                        "info" if days_until > 3 else "warning"
-                    )
-            except:
-                continue
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT last_name, first_name, middle_name, dob 
+                    FROM clients 
+                    WHERE dob IS NOT NULL AND dob != ''
+                """)
+                
+                clients = cur.fetchall()
+            
+            for last, first, middle, dob in clients:
+                try:
+                    if not dob:
+                        continue
+                        
+                    bday = datetime.strptime(dob, "%Y-%m-%d").date()
+                    bday_this_year = bday.replace(year=today.year)
+                    
+                    # Если день рождения уже прошел в этом году, смотрим на следующий год
+                    if bday_this_year < today:
+                        bday_this_year = bday.replace(year=today.year + 1)
+                    
+                    days_until = (bday_this_year - today).days
+                    
+                    if 0 <= days_until <= 30:
+                        level = "warning" if days_until <= 7 else "info"
+                        self.add_notification(
+                            "birthday", 
+                            f"🎂 День рождения у {last} {first} {middle or ''} через {days_until} дн. ({bday.strftime('%d.%m.%Y')})",
+                            level
+                        )
+                except ValueError:
+                    continue
+                    
+        except Exception as e:
+            print(f"Ошибка проверки дней рождений: {e}")
     
     def check_ippcu_expiry(self):
         """Проверка истекающих ИППСУ"""
-        today = datetime.today().date()
-        
-        with sqlite3.connect(DB_NAME) as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT last_name, first_name, ippcu_end 
-                FROM clients 
-                WHERE ippcu_end IS NOT NULL AND ippcu_end != ''
-            """)
+        try:
+            today = datetime.today().date()
             
-            clients = cur.fetchall()
-        
-        for last, first, ippcu_end in clients:
-            try:
-                end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
-                days_left = (end_date - today).days
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT last_name, first_name, ippcu_end 
+                    FROM clients 
+                    WHERE ippcu_end IS NOT NULL AND ippcu_end != ''
+                """)
                 
-                if 0 < days_left <= 7:
-                    self.add_notification(
-                        "ippcu_warning",
-                        f"ИППСУ {last} {first} истекает через {days_left} дн.",
-                        "warning"
-                    )
-                elif days_left == 0:
-                    self.add_notification(
-                        "ippcu_urgent",
-                        f"СРОЧНО: ИППСУ {last} {first} истекает сегодня!",
-                        "error"
-                    )
-                elif days_left < 0:
-                    self.add_notification(
-                        "ippcu_expired",
-                        f"ПРОСРОЧЕНО: ИППСУ {last} {first} ({abs(days_left)} дн. назад)",
-                        "error"
-                    )
-            except:
-                continue
+                clients = cur.fetchall()
+            
+            for last, first, ippcu_end in clients:
+                try:
+                    if not ippcu_end:
+                        continue
+                        
+                    end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
+                    days_left = (end_date - today).days
+                    
+                    if days_left == 0:
+                        self.add_notification(
+                            "ippcu_urgent",
+                            f"🚨 СРОЧНО: ИППСУ {last} {first} истекает сегодня!",
+                            "error"
+                        )
+                    elif 0 < days_left <= 7:
+                        self.add_notification(
+                            "ippcu_warning",
+                            f"⚠️ ИППСУ {last} {first} истекает через {days_left} дн.",
+                            "warning"
+                        )
+                    elif 7 < days_left <= 30:
+                        self.add_notification(
+                            "ippcu_info",
+                            f"ℹ️ ИППСУ {last} {first} истекает через {days_left} дн.",
+                            "info"
+                        )
+                    elif days_left < 0:
+                        self.add_notification(
+                            "ippcu_expired",
+                            f"❌ ПРОСРОЧЕНО: ИППСУ {last} {first} ({abs(days_left)} дн. назад)",
+                            "error"
+                        )
+                except ValueError:
+                    continue
+                    
+        except Exception as e:
+            print(f"Ошибка проверки ИППСУ: {e}")
     
     def check_empty_contracts(self):
         """Проверка клиентов без договоров"""
-        with sqlite3.connect(DB_NAME) as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT last_name, first_name 
-                FROM clients 
-                WHERE contract_number IS NULL OR contract_number = '' OR contract_number = 'не указан'
-            """)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT last_name, first_name 
+                    FROM clients 
+                    WHERE contract_number IS NULL OR contract_number = '' OR contract_number = 'не указан'
+                """)
+                
+                empty_contracts = cur.fetchall()
             
-            empty_contracts = cur.fetchall()
-        
-        if empty_contracts:
-            self.add_notification(
-                "empty_contracts",
-                f"Найдено {len(empty_contracts)} клиентов без номера договора",
-                "warning"
-            )
+            if empty_contracts:
+                client_list = ", ".join([f"{last} {first}" for last, first in empty_contracts[:3]])
+                if len(empty_contracts) > 3:
+                    client_list += f" и ещё {len(empty_contracts) - 3}"
+                
+                self.add_notification(
+                    "empty_contracts",
+                    f"📄 Отсутствуют номера договоров у {len(empty_contracts)} клиентов: {client_list}",
+                    "warning"
+                )
+                
+        except Exception as e:
+            print(f"Ошибка проверки договоров: {e}")
+    
+    def check_upcoming_reviews(self):
+        """Проверка предстоящих пересмотров ИППСУ"""
+        try:
+            today = datetime.today().date()
+            next_month = today + timedelta(days=30)
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT last_name, first_name, ippcu_start 
+                    FROM clients 
+                    WHERE ippcu_start IS NOT NULL AND ippcu_start != ''
+                """)
+                
+                clients = cur.fetchall()
+            
+            for last, first, ippcu_start in clients:
+                try:
+                    if not ippcu_start:
+                        continue
+                        
+                    start_date = datetime.strptime(ippcu_start, "%Y-%m-%d").date()
+                    # Предполагаем, что пересмотр нужен через 6 месяцев
+                    review_date = start_date + timedelta(days=180)
+                    days_until_review = (review_date - today).days
+                    
+                    if 0 <= days_until_review <= 30:
+                        level = "warning" if days_until_review <= 7 else "info"
+                        self.add_notification(
+                            "review",
+                            f"📋 Требуется пересмотр ИППСУ для {last} {first} через {days_until_review} дн.",
+                            level
+                        )
+                except ValueError:
+                    continue
+                    
+        except Exception as e:
+            print(f"Ошибка проверки пересмотров: {e}")
     
     def add_notification(self, category, message, level="info"):
-        """Добавление уведомлений"""
-        self.notifications.append({
-            "timestamp": datetime.now(),
-            "category": category,
-            "message": message,
-            "level": level,
-            "read": False
-        })
-    
-    def show_daily_reminders(self):
-        """Показать ежедневные напоминания"""
-        if not self.notifications:
-            return
+        """Добавление уведомления с предотвращением дубликатов"""
+        # Проверяем на дубликаты за последние 24 часа
+        yesterday = datetime.now() - timedelta(days=1)
+        recent_duplicate = any(
+            n['category'] == category and 
+            n['message'] == message and 
+            n['timestamp'] > yesterday and
+            not n['read']
+            for n in self.notifications
+        )
         
-        unread = [n for n in self.notifications if not n['read']]
-        if unread:
-            self.show_notification_window()
+        if not recent_duplicate:
+            self.notifications.append({
+                "id": len(self.notifications) + 1,
+                "timestamp": datetime.now(),
+                "category": category,
+                "message": message,
+                "level": level,
+                "read": False
+            })
+    
+    def get_unread_count(self):
+        """Получить количество непрочитанных уведомлений"""
+        return sum(1 for n in self.notifications if not n['read'])
+    
+    def get_notifications_by_priority(self, unread_only=False):
+        """Получить уведомления, отсортированные по приоритету"""
+        priority_order = {"error": 0, "warning": 1, "info": 2}
+        
+        notifications = self.notifications
+        if unread_only:
+            notifications = [n for n in notifications if not n['read']]
+            
+        return sorted(notifications, 
+                     key=lambda x: (priority_order.get(x['level'], 3), x['timestamp']), 
+                     reverse=True)
+    
+    def mark_as_read(self, notification_id):
+        """Пометить уведомление как прочитанное"""
+        for notification in self.notifications:
+            if notification['id'] == notification_id:
+                notification['read'] = True
+                break
+    
+    def mark_all_read(self):
+        """Пометить все уведомления как прочитанные"""
+        for notification in self.notifications:
+            notification['read'] = True
+    
+    def clear_old_notifications(self, days=7):
+        """Очистить старые уведомления"""
+        cutoff_date = datetime.now() - timedelta(days=days)
+        self.notifications = [
+            n for n in self.notifications 
+            if n['timestamp'] > cutoff_date or not n['read']
+        ]
     
     def show_notification_window(self):
-        """Окно уведомлений"""
-        if not hasattr(self, 'notification_window') or not self.notification_window.winfo_exists():
-            self.create_notification_window()
-        
-        self.update_notification_list()
+        """Показать окно уведомлений"""
+        if not self.is_initialized:
+            messagebox.showinfo("Информация", "Система уведомлений не инициализирована")
+            return
+            
+        NotificationWindow(self)
+
+class NotificationWindow:
+    def __init__(self, notification_system):
+        self.notification_system = notification_system
+        self.create_window()
     
-    def create_notification_window(self):
+    def create_window(self):
         """Создание окна уведомлений"""
-        self.notification_window = tk.Toplevel(root)
-        self.notification_window.title("Уведомления")
-        self.notification_window.geometry("500x400")
-        self.notification_window.configure(bg=ModernStyle.COLORS['background'])
+        self.window = tk.Toplevel(root)
+        self.window.title("🔔 Уведомления")
+        self.window.geometry("600x500")
+        self.window.configure(bg=ModernStyle.COLORS['background'])
+        self.window.minsize(500, 400)
         
-        # Заголовок
-        header = tk.Frame(self.notification_window, bg=ModernStyle.COLORS['primary'], height=50)
+        # Заголовок с количеством уведомлений
+        header = tk.Frame(self.window, bg=ModernStyle.COLORS['primary'], height=60)
         header.pack(fill='x', padx=0, pady=0)
+        header.pack_propagate(False)
         
-        tk.Label(header, text="🔔 Уведомления", 
+        unread_count = self.notification_system.get_unread_count()
+        title_text = f"🔔 Уведомления ({unread_count} непрочитанных)"
+        
+        tk.Label(header, text=title_text, 
                 bg=ModernStyle.COLORS['primary'],
                 fg='white',
-                font=ModernStyle.FONTS['h2']).pack(pady=10)
+                font=ModernStyle.FONTS['h2']).pack(pady=15)
         
-        # Список уведомлений
-        notification_frame = tk.Frame(self.notification_window, bg=ModernStyle.COLORS['background'])
-        notification_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        # Основной контент
+        main_frame = tk.Frame(self.window, bg=ModernStyle.COLORS['background'])
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
         
-        self.notification_list = tk.Listbox(notification_frame, 
-                                          font=ModernStyle.FONTS['body'],
-                                          bg=ModernStyle.COLORS['surface'],
-                                          relief='flat',
-                                          selectmode='single')
-        self.notification_list.pack(fill='both', expand=True)
+        # Создаем фрейм для списка уведомлений с прокруткой
+        list_frame = tk.Frame(main_frame, bg=ModernStyle.COLORS['background'])
+        list_frame.pack(fill='both', expand=True)
         
-        # Кнопки
-        button_frame = tk.Frame(self.notification_window, bg=ModernStyle.COLORS['background'])
-        button_frame.pack(fill='x', padx=10, pady=10)
+        # Прокрутка
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
         
-        ttk.Button(button_frame, text="Пометить как прочитанные", 
+        self.notification_canvas = tk.Canvas(
+            list_frame, 
+            bg=ModernStyle.COLORS['surface'],
+            yscrollcommand=scrollbar.set,
+            highlightthickness=0
+        )
+        self.notification_canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=self.notification_canvas.yview)
+        
+        # Фрейм для уведомлений внутри canvas
+        self.notifications_frame = tk.Frame(self.notification_canvas, bg=ModernStyle.COLORS['surface'])
+        self.canvas_window = self.notification_canvas.create_window(
+            (0, 0), window=self.notifications_frame, anchor='nw', width=self.notification_canvas.winfo_reqwidth()
+        )
+        
+        # Кнопки управления
+        button_frame = tk.Frame(main_frame, bg=ModernStyle.COLORS['background'])
+        button_frame.pack(fill='x', pady=(10, 0))
+        
+        ttk.Button(button_frame, text="📁 Пометить все как прочитанные", 
                   style='Primary.TButton',
                   command=self.mark_all_read).pack(side='left', padx=(0, 10))
         
-        ttk.Button(button_frame, text="Очистить все", 
+        ttk.Button(button_frame, text="🗑️ Очистить старые", 
                   style='Secondary.TButton',
-                  command=self.clear_all).pack(side='left')
+                  command=self.clear_old).pack(side='left', padx=(0, 10))
         
-        ttk.Button(button_frame, text="Закрыть", 
+        ttk.Button(button_frame, text="🔄 Обновить", 
                   style='Secondary.TButton',
-                  command=self.notification_window.destroy).pack(side='right')
+                  command=self.refresh).pack(side='left')
         
-        # Двойной клик для пометки как прочитанного
-        self.notification_list.bind('<Double-1>', lambda e: self.mark_selected_read())
+        ttk.Button(button_frame, text="✖️ Закрыть", 
+                  style='Secondary.TButton',
+                  command=self.window.destroy).pack(side='right')
+        
+        # Привязки событий
+        self.notifications_frame.bind('<Configure>', self.on_frame_configure)
+        self.notification_canvas.bind('<Configure>', self.on_canvas_configure)
+        
+        self.refresh()
     
-    def update_notification_list(self):
-        """Обновление списка уведомлений"""
-        if hasattr(self, 'notification_list'):
-            self.notification_list.delete(0, tk.END)
+    def on_frame_configure(self, event):
+        """Обновить scrollregion при изменении размера фрейма"""
+        self.notification_canvas.configure(scrollregion=self.notification_canvas.bbox("all"))
+    
+    def on_canvas_configure(self, event):
+        """Обновить ширину внутреннего фрейма при изменении размера canvas"""
+        self.notification_canvas.itemconfig(self.canvas_window, width=event.width)
+    
+    def create_notification_widget(self, parent, notification):
+        """Создать виджет для одного уведомления"""
+        frame = tk.Frame(parent, bg=ModernStyle.COLORS['surface'], relief='solid', bd=1, padx=10, pady=8)
+        frame.pack(fill='x', pady=2)
+        
+        # Иконки в зависимости от уровня и статуса
+        level_icons = {
+            'error': '❌',
+            'warning': '⚠️',
+            'info': 'ℹ️'
+        }
+        
+        status_icon = '✅' if notification['read'] else '🔔'
+        level_icon = level_icons.get(notification['level'], '📌')
+        
+        # Верхняя строка: иконки и время
+        top_frame = tk.Frame(frame, bg=ModernStyle.COLORS['surface'])
+        top_frame.pack(fill='x')
+        
+        tk.Label(top_frame, text=f"{status_icon} {level_icon}", 
+                bg=ModernStyle.COLORS['surface'],
+                fg=ModernStyle.COLORS['text_secondary'],
+                font=ModernStyle.FONTS['small']).pack(side='left')
+        
+        time_str = notification['timestamp'].strftime("%d.%m.%Y %H:%M")
+        tk.Label(top_frame, text=time_str,
+                bg=ModernStyle.COLORS['surface'],
+                fg=ModernStyle.COLORS['text_secondary'],
+                font=ModernStyle.FONTS['small']).pack(side='right')
+        
+        # Текст уведомления
+        message_label = tk.Label(frame, text=notification['message'],
+                               bg=ModernStyle.COLORS['surface'],
+                               fg=ModernStyle.COLORS['text_primary'],
+                               font=ModernStyle.FONTS['body'],
+                               justify='left',
+                               wraplength=550)
+        message_label.pack(fill='x', pady=(5, 0))
+        
+        # Кнопка пометить как прочитанное (только для непрочитанных)
+        if not notification['read']:
+            def mark_read():
+                self.notification_system.mark_as_read(notification['id'])
+                self.refresh()
+                # Обновляем заголовок главного окна если есть кнопка уведомлений
+                if hasattr(root, 'update_notification_badge'):
+                    root.update_notification_badge()
             
-            for notification in sorted(self.notifications, 
-                                     key=lambda x: x['timestamp'], reverse=True):
-                level_icon = {
-                    'info': 'ℹ️',
-                    'warning': '⚠️', 
-                    'error': '❌'
-                }.get(notification['level'], '📌')
-                
-                status_icon = '✅' if notification['read'] else '🔔'
-                time_str = notification['timestamp'].strftime("%H:%M")
-                
-                display_text = f"{status_icon} {level_icon} [{time_str}] {notification['message']}"
-                self.notification_list.insert(tk.END, display_text)
+            btn_frame = tk.Frame(frame, bg=ModernStyle.COLORS['surface'])
+            btn_frame.pack(fill='x', pady=(5, 0))
+            
+            ttk.Button(btn_frame, text="Отметить как прочитанное",
+                      style='Secondary.TButton',
+                      command=mark_read).pack(side='right')
+        
+        return frame
     
-    def mark_selected_read(self):
-        """Пометить выбранное уведомление как прочитанное"""
-        selection = self.notification_list.curselection()
-        if selection:
-            index = selection[0]
-            # Находим соответствующее уведомление (учитываем обратный порядок)
-            actual_index = len(self.notifications) - 1 - index
-            if 0 <= actual_index < len(self.notifications):
-                self.notifications[actual_index]['read'] = True
-            self.update_notification_list()
+    def refresh(self):
+        """Обновить список уведомлений"""
+        # Очищаем старые виджеты
+        for widget in self.notifications_frame.winfo_children():
+            widget.destroy()
+        
+        # Получаем уведомления, отсортированные по приоритету
+        notifications = self.notification_system.get_notifications_by_priority()
+        
+        if not notifications:
+            # Сообщение об отсутствии уведомлений
+            empty_frame = tk.Frame(self.notifications_frame, bg=ModernStyle.COLORS['surface'], height=100)
+            empty_frame.pack(fill='both', expand=True, pady=20)
+            empty_frame.pack_propagate(False)
+            
+            tk.Label(empty_frame, text="🎉 Нет уведомлений",
+                    bg=ModernStyle.COLORS['surface'],
+                    fg=ModernStyle.COLORS['text_secondary'],
+                    font=ModernStyle.FONTS['h3']).pack(expand=True)
+            
+            tk.Label(empty_frame, text="Все задачи выполнены!",
+                    bg=ModernStyle.COLORS['surface'],
+                    fg=ModernStyle.COLORS['text_secondary'],
+                    font=ModernStyle.FONTS['body']).pack()
+        else:
+            # Создаем виджеты для каждого уведомления
+            for notification in notifications:
+                self.create_notification_widget(self.notifications_frame, notification)
     
     def mark_all_read(self):
         """Пометить все как прочитанные"""
-        for notification in self.notifications:
-            notification['read'] = True
-        self.update_notification_list()
+        self.notification_system.mark_all_read()
+        self.refresh()
+        if hasattr(root, 'update_notification_badge'):
+            root.update_notification_badge()
     
-    def clear_all(self):
-        """Очистить все уведомления"""
-        self.notifications = []
-        self.update_notification_list()
+    def clear_old(self):
+        """Очистить старые уведомления"""
+        self.notification_system.clear_old_notifications()
+        self.refresh()
+        if hasattr(root, 'update_notification_badge'):
+            root.update_notification_badge()
 
 # Глобальный экземпляр системы уведомлений
-notification_system = NotificationSystem()
-
-def show_notifications():
-    """Показать уведомления (вызывается из меню)"""
-    notification_system.show_notification_window()
+notification_system = NotificationSystem(DB_NAME)
 
 # ================== НАСТРОЙКИ ==================
 def settings_window():
@@ -1161,10 +1391,16 @@ def init_db():
     """Создаёт новую схему или мигрирует старую (если есть колонка fio)."""
     with sqlite3.connect(DB_NAME) as conn:
         cur = conn.cursor()
-        cur.execute("PRAGMA table_info(clients)")
-        cols = [r[1] for r in cur.fetchall()]
-
-        if not cols:
+        
+        # Проверяем существование таблицы clients
+        cur.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='clients'
+        """)
+        table_exists = cur.fetchone() is not None
+        
+        if not table_exists:
+            print("Создаем таблицу clients...")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS clients (
@@ -1183,9 +1419,15 @@ def init_db():
                 """
             )
             conn.commit()
+            print("Таблица clients создана успешно")
             return
 
+        # Проверяем структуру существующей таблицы
+        cur.execute("PRAGMA table_info(clients)")
+        cols = [r[1] for r in cur.fetchall()]
+
         if "fio" in cols and "last_name" not in cols:
+            print("Мигрируем старую схему...")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS clients_new (
@@ -1226,12 +1468,10 @@ def init_db():
             cur.execute("DROP TABLE clients")
             cur.execute("ALTER TABLE clients_new RENAME TO clients")
             conn.commit()
+            print("Миграция завершена успешно")
             return
 
-        if "last_name" in cols and "dob" in cols:
-            conn.commit()
-            return
-
+        # Добавляем отсутствующие колонки если нужно
         try:
             if "last_name" not in cols:
                 cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
@@ -1240,8 +1480,10 @@ def init_db():
             if "middle_name" not in cols:
                 cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Ошибка при добавлении колонок: {e}")
+
+        print("База данных инициализирована успешно")
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
     """Добавление с проверкой дублей (по ФИО+дата рождения, без учёта регистра)."""
@@ -1596,13 +1838,32 @@ def toggle_check(event):
 def main():
     global root, tree
     
+    # Инициализация главного окна
     root = tk.Tk()
     root.title("Отделение дневного пребывания - Полустационарное обслуживание")
     root.geometry("1400x900")
+    root.configure(bg=ModernStyle.COLORS['background'])
+    
+    # Инициализация базы данных ПЕРВОЙ
+    try:
+        init_db()
+        print("✅ База данных инициализирована")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации БД: {e}")
+        messagebox.showerror("Ошибка", f"Не удалось инициализировать базу данных: {e}")
+        return  # Завершаем выполнение если БД не доступна
+    
+    # Инициализация системы уведомлений
+    try:
+        if notification_system.initialize():
+            print("✅ Система уведомлений инициализирована")
+        else:
+            print("⚠️ Система уведомлений отключена")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации уведомлений: {e}")
     
     # Настройка современного стиля
     setup_modern_style()
-    root.configure(bg=ModernStyle.COLORS['background'])
     
     # Создание Notebook для вкладок
     notebook = ttk.Notebook(root)
@@ -1623,50 +1884,7 @@ def main():
     root.search_entry = search_entry
     root.date_from_entry = date_from_entry
     root.date_to_entry = date_to_entry
-    
-    # === ВКЛАДКА ЧАТА ===
-    try:
-        from chat_manager import ChatManager
-        from chat_ui import ChatUI
-        from chat_notifications import ChatNotifications
-        
-        # Инициализация чата
-        chat_manager = ChatManager()
-        chat_notifications = ChatNotifications(chat_manager)
-        
-        # Создание UI чата
-        chat_ui = ChatUI(notebook, chat_manager, ModernStyle.COLORS, ModernStyle.FONTS)
-        chat_frame = chat_ui.get_widget()
-        notebook.add(chat_frame, text="💬 Чат сотрудников")
-        
-        # Сохраняем ссылки для доступа из других функций
-        root.chat_manager = chat_manager
-        root.chat_ui = chat_ui
-        root.chat_notifications = chat_notifications
-        
-        # Функция периодического обновления чата
-        def update_chat_periodically():
-            if hasattr(root, 'chat_ui'):
-                root.chat_ui.refresh_chat()
-                root.chat_ui.update_unread_count()
-            root.after(30000, update_chat_periodically)  # Обновление каждые 30 секунд
-        
-        # Запускаем периодическое обновление чата
-        root.after(5000, update_chat_periodically)
-        
-    except ImportError as e:
-        print(f"Модули чата не найдены: {e}")
-        # Создаем заглушку для вкладки чата
-        chat_stub_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
-        notebook.add(chat_stub_frame, text="💬 Чат (недоступен)")
-        
-        stub_label = tk.Label(chat_stub_frame, 
-                            text="Модуль чата не установлен\n\nДля использования чата установите необходимые зависимости",
-                            bg=ModernStyle.COLORS['background'],
-                            fg=ModernStyle.COLORS['text_secondary'],
-                            font=ModernStyle.FONTS['h3'],
-                            justify='center')
-        stub_label.pack(expand=True, fill='both', padx=20, pady=20)
+    root.notebook = notebook
     
     # Настройка таблицы
     setup_initial_columns(tree)
@@ -1679,33 +1897,152 @@ def main():
     tree.bind("<Button-3>", show_context_menu)
     tree.bind("<Button-1>", toggle_check)
     
-    # Инициализация базы данных
-    init_db()
+    # === ВКЛАДКА ЧАТА ===
+    def initialize_chat():
+        try:
+            # Инициализация чата
+            chat_manager = ChatManager()
+            chat_notifications = ChatNotifications(chat_manager)
+            
+            # Создание UI чата
+            chat_ui = ChatUI(notebook, chat_manager, ModernStyle.COLORS, ModernStyle.FONTS)
+            chat_frame = chat_ui.get_widget()
+            notebook.add(chat_frame, text="💬 Чат сотрудников")
+            
+            # Сохраняем ссылки для доступа из других функций
+            root.chat_manager = chat_manager
+            root.chat_ui = chat_ui
+            root.chat_notifications = chat_notifications
+            
+            # Функция периодического обновления чата
+            def update_chat_periodically():
+                if hasattr(root, 'chat_ui') and root.chat_ui:
+                    try:
+                        root.chat_ui.refresh_chat()
+                        root.chat_ui.update_unread_count()
+                    except Exception as e:
+                        print(f"Ошибка обновления чата: {e}")
+                root.after(30000, update_chat_periodically)
+            
+            root.after(5000, update_chat_periodically)
+            root.after(4000, lambda: chat_manager.set_user_online(True))
+            
+            print("✅ Модуль чата инициализирован")
+            
+        except ImportError as e:
+            print(f"❌ Модули чата не найдены: {e}")
+            chat_stub_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
+            notebook.add(chat_stub_frame, text="💬 Чат (недоступен)")
+            
+            stub_label = tk.Label(chat_stub_frame, 
+                                text="Модуль чата не установлен\n\nДля использования чата установите необходимые зависимости",
+                                bg=ModernStyle.COLORS['background'],
+                                fg=ModernStyle.COLORS['text_secondary'],
+                                font=ModernStyle.FONTS['h3'],
+                                justify='center')
+            stub_label.pack(expand=True, fill='both', padx=20, pady=20)
+        except Exception as e:
+            print(f"❌ Ошибка инициализации чата: {e}")
+            # Создаем заглушку при любой ошибке
+            error_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
+            notebook.add(error_frame, text="💬 Чат (ошибка)")
+            
+            error_label = tk.Label(error_frame, 
+                                 text=f"Ошибка инициализации чата:\n{str(e)}",
+                                 bg=ModernStyle.COLORS['background'],
+                                 fg=ModernStyle.COLORS['error'],
+                                 font=ModernStyle.FONTS['body'],
+                                 justify='center')
+            error_label.pack(expand=True, fill='both', padx=20, pady=20)
     
-    # Отложенные операции
-    root.after(200, refresh_tree)  # Обновление таблицы
-    root.after(1000, check_expiring_ippcu)  # Проверка ИППСУ
+    # Инициализируем чат с задержкой
+    root.after(1000, initialize_chat)
     
-    # Показать уведомления при запуске
-    root.after(2000, notification_system.show_daily_reminders)
+    # === ОТЛОЖЕННЫЕ ОПЕРАЦИИ ===
     
-    # Проверка обновлений
-    root.after(100, updater.auto_update)
+    def initialize_application():
+        """Инициализация основных компонентов приложения"""
+        try:
+            # Загрузка данных в таблицу
+            refresh_tree()
+            print("✅ Таблица клиентов загружена")
+            
+            # Проверка обновлений
+            updater.auto_update()
+            print("✅ Проверка обновлений выполнена")
+            
+        except Exception as e:
+            print(f"❌ Ошибка инициализации приложения: {e}")
+            messagebox.showwarning("Предупреждение", 
+                                f"Некоторые функции могут работать некорректно: {e}")
     
-    # Установка пользователя онлайн в чате (если чат доступен)
-    if hasattr(root, 'chat_manager'):
-        root.after(3000, lambda: root.chat_manager.set_user_online(True))
+    def initialize_notifications():
+        """Инициализация системы уведомлений"""
+        try:
+            if notification_system.is_initialized:
+                unread_count = notification_system.get_unread_count()
+                if unread_count > 0:
+                    # Показываем уведомления только если есть непрочитанные
+                    notification_system.show_notification_window()
+                    print(f"✅ Показано {unread_count} уведомлений")
+                else:
+                    print("✅ Непрочитанных уведомлений нет")
+        except Exception as e:
+            print(f"❌ Ошибка показа уведомлений: {e}")
     
-    # Обработка закрытия приложения
+    def initialize_security_checks():
+        """Инициализация проверок безопасности"""
+        try:
+            check_expiring_ippcu()
+            print("✅ Проверка ИППСУ выполнена")
+        except Exception as e:
+            print(f"❌ Ошибка проверки ИППСУ: {e}")
+    
+    # Планируем отложенные операции с правильным порядком
+    root.after(500, initialize_application)        # Основная инициализация
+    root.after(1500, initialize_security_checks)   # Проверки безопасности
+    root.after(3000, initialize_notifications)     # Уведомления (после загрузки данных)
+    
+    # === ОБРАБОТКА ЗАКРЫТИЯ ПРИЛОЖЕНИЯ ===
     def on_closing():
-        # Установка пользователя оффлайн в чате
-        if hasattr(root, 'chat_manager'):
-            root.chat_manager.set_user_online(False)
-        root.destroy()
+        """Обработчик закрытия приложения"""
+        try:
+            # Устанавливаем пользователя оффлайн в чате
+            if hasattr(root, 'chat_manager') and root.chat_manager:
+                root.chat_manager.set_user_online(False)
+                print("✅ Пользователь установлен как оффлайн")
+            
+            # Сохраняем настройки
+            settings_manager.save_settings()
+            print("✅ Настройки сохранены")
+            
+            # Очищаем старые уведомления
+            if notification_system.is_initialized:
+                notification_system.clear_old_notifications()
+                print("✅ Старые уведомления очищены")
+                
+        except Exception as e:
+            print(f"⚠️ Ошибка при завершении работы: {e}")
+        finally:
+            root.destroy()
     
     root.protocol("WM_DELETE_WINDOW", on_closing)
     
-    root.mainloop()
+    # === СТАТУС ЗАПУСКА ===
+    def show_startup_status():
+        """Показать статус запуска в статусной строке"""
+        if hasattr(root, 'status_label'):
+            root.status_label.config(text="Приложение готово к работе")
+    
+    root.after(4000, show_startup_status)
+    
+    # Запуск главного цикла
+    try:
+        root.mainloop()
+    except Exception as e:
+        print(f"❌ Критическая ошибка: {e}")
+        messagebox.showerror("Критическая ошибка", 
+                           f"Приложение завершено с ошибкой:\n{e}")
 
 if __name__ == "__main__":
     main()
