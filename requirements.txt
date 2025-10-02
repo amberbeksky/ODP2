@@ -1,31 +1,45 @@
-numpy==1.26.4
-pandas==2.0.3
-matplotlib==3.7.2
+# Основные зависимости
+numpy==1.24.3
+pandas==1.5.3
+matplotlib==3.5.4
 tkcalendar==1.6.1
-openpyxl==3.1.2
-pillow==10.2.0
+openpyxl==3.0.10
+pillow==9.5.0
 pyinstaller==5.13.2
-kiwisolver==1.4.5
+kiwisolver==1.4.4
 babel==2.12.1
-gspread==6.1.2
-google-auth==2.34.0
-google-auth-oauthlib==1.2.1
+gspread==5.12.2
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
 lxml==4.9.3
 python-docx==0.8.11
+
+# Для updater.py
 requests==2.31.0
 beautifulsoup4==4.12.2
+
+# Для работы с датами и временем
 python-dateutil==2.8.2
-pytz==2023.3
+pytz==2023.3.post1
+
+# Для работы с Windows API
 pywin32==306
 wmi==1.5.1
 psutil==5.9.5
+
+# Для кодировок и сетевых запросов
 charset-normalizer==3.3.2
 urllib3==2.1.0
 idna==3.6
 certifi==2023.11.17
-backports.zoneinfo==0.2.1
-typing-extensions==4.8.0
+
+# УБРАНЫ проблемные зависимости:
+# backports.zoneinfo - вызывает ошибки компиляции
+# typing-extensions - не нужна для Python 3.11+
+# pysimplegui - не нужен
+
+# Для работы с JSON
 pyyaml==6.0.1
-toml==0.10.2
+
+# Для логирования
 colorama==0.4.6
-loguru==0.7.2
