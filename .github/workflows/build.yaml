@@ -49,6 +49,8 @@ jobs:
       shell: pwsh
       run: |
         & "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
+        echo "✅ Installer created successfully"
+        dir *.exe
 
     - name: Upload exe artifact
       uses: actions/upload-artifact@v4
@@ -63,3 +65,4 @@ jobs:
       with:
         name: setup-x86
         path: ODP-Installer.exe
+        if-no-files-found: error
