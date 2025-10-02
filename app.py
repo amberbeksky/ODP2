@@ -23,6 +23,51 @@ os.makedirs(APP_DIR, exist_ok=True)
 DB_NAME = os.path.join(APP_DIR, "clients.db")
 SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
 
+# ================== Менеджер настроек ==================
+class SettingsManager:
+    def __init__(self):
+        self.settings_file = os.path.join(APP_DIR, "settings.json")
+        self.settings = self.load_settings()
+    
+    def load_settings(self):
+        """Загрузка настроек из файла"""
+        default_settings = {
+            'default_export_path': os.path.join(os.path.expanduser("~"), "Desktop"),
+            'auto_check_updates': True,
+            'show_notifications': True,
+            'theme': 'modern'
+        }
+        
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    loaded_settings = json.load(f)
+                    default_settings.update(loaded_settings)
+        except Exception as e:
+            print(f"Ошибка загрузки настроек: {e}")
+        
+        return default_settings
+    
+    def save_settings(self):
+        """Сохранение настроек в файл"""
+        try:
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Ошибка сохранения настроек: {e}")
+    
+    def get(self, key, default=None):
+        """Получить значение настройки"""
+        return self.settings.get(key, default)
+    
+    def set(self, key, value):
+        """Установить значение настройки"""
+        self.settings[key] = value
+        self.save_settings()
+
+# Глобальный экземпляр менеджера настроек
+settings_manager = SettingsManager()
+
 # ================== СОВРЕМЕННЫЙ СТИЛЬ ==================
 class ModernStyle:
     COLORS = {
@@ -188,7 +233,7 @@ def create_toolbar(root):
         ("📄 Экспорт в Word", export_selected_to_word, 'Secondary.TButton', "Ctrl+W"),
         ("📊 Статистика", show_statistics, 'Secondary.TButton', ""),
         ("🔔 Уведомления", show_notifications, 'Secondary.TButton', "F2"),
-        ("⚙️ Настройки", settings_window, 'Secondary.TButton', "")  # Новая кнопка
+        ("⚙️ Настройки", settings_window, 'Secondary.TButton', "")  # Исправлено: теперь функция определена
     ]
     
     for text, command, style_name, shortcut in buttons:
@@ -897,6 +942,113 @@ notification_system = NotificationSystem()
 def show_notifications():
     """Показать уведомления (вызывается из меню)"""
     notification_system.show_notification_window()
+
+# ================== НАСТРОЙКИ ==================
+def settings_window():
+    """Окно настроек приложения"""
+    settings_win = tk.Toplevel(root)
+    settings_win.title("Настройки")
+    settings_win.geometry("500x400")
+    settings_win.configure(bg=ModernStyle.COLORS['background'])
+    settings_win.resizable(False, False)
+    
+    # Заголовок
+    header = tk.Frame(settings_win, bg=ModernStyle.COLORS['primary'], height=50)
+    header.pack(fill='x', padx=0, pady=0)
+    
+    tk.Label(header, text="⚙️ Настройки", 
+            bg=ModernStyle.COLORS['primary'],
+            fg='white',
+            font=ModernStyle.FONTS['h2']).pack(pady=10)
+    
+    # Основное содержимое
+    content_frame = tk.Frame(settings_win, bg=ModernStyle.COLORS['background'], padx=20, pady=20)
+    content_frame.pack(fill='both', expand=True)
+    
+    # Путь для экспорта
+    export_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    export_frame.pack(fill='x', pady=10)
+    
+    tk.Label(export_frame, text="Папка для экспорта по умолчанию:",
+            bg=ModernStyle.COLORS['background'],
+            fg=ModernStyle.COLORS['text_primary'],
+            font=ModernStyle.FONTS['body']).pack(anchor='w')
+    
+    export_path_frame = tk.Frame(export_frame, bg=ModernStyle.COLORS['background'])
+    export_path_frame.pack(fill='x', pady=5)
+    
+    export_path_var = tk.StringVar(value=settings_manager.get('default_export_path'))
+    export_entry = tk.Entry(export_path_frame, textvariable=export_path_var, 
+                           font=ModernStyle.FONTS['body'], width=40)
+    export_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+    
+    def browse_export_path():
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(initialdir=export_path_var.get())
+        if folder:
+            export_path_var.set(folder)
+    
+    ttk.Button(export_path_frame, text="Обзор", 
+              style='Secondary.TButton',
+              command=browse_export_path).pack(side='right')
+    
+    # Настройки уведомлений
+    notifications_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    notifications_frame.pack(fill='x', pady=10)
+    
+    show_notifications_var = tk.BooleanVar(value=settings_manager.get('show_notifications', True))
+    notifications_check = ttk.Checkbutton(notifications_frame, 
+                                        text="Показывать уведомления при запуске",
+                                        variable=show_notifications_var,
+                                        style='Modern.TCheckbutton')
+    notifications_check.pack(anchor='w')
+    
+    auto_updates_var = tk.BooleanVar(value=settings_manager.get('auto_check_updates', True))
+    updates_check = ttk.Checkbutton(notifications_frame,
+                                   text="Автоматически проверять обновления",
+                                   variable=auto_updates_var,
+                                   style='Modern.TCheckbutton')
+    updates_check.pack(anchor='w', pady=(5, 0))
+    
+    # Кнопки сохранения/отмены
+    button_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    button_frame.pack(fill='x', pady=20)
+    
+    def save_settings():
+        settings_manager.set('default_export_path', export_path_var.get())
+        settings_manager.set('show_notifications', show_notifications_var.get())
+        settings_manager.set('auto_check_updates', auto_updates_var.get())
+        messagebox.showinfo("Настройки", "Настройки успешно сохранены!")
+        settings_win.destroy()
+    
+    ttk.Button(button_frame, text="Сохранить", 
+              style='Primary.TButton',
+              command=save_settings).pack(side='right', padx=(10, 0))
+    
+    ttk.Button(button_frame, text="Отмена", 
+              style='Secondary.TButton',
+              command=settings_win.destroy).pack(side='right')
+    
+    # Информация о приложении
+    info_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    info_frame.pack(fill='x', pady=20)
+    
+    tk.Label(info_frame, text="Информация о приложении:",
+            bg=ModernStyle.COLORS['background'],
+            fg=ModernStyle.COLORS['text_primary'],
+            font=ModernStyle.FONTS['h3']).pack(anchor='w')
+    
+    info_text = f"""
+Версия: 1.0
+База данных: {DB_NAME}
+Папка приложения: {APP_DIR}
+    """
+    
+    tk.Label(info_frame, text=info_text,
+            bg=ModernStyle.COLORS['background'],
+            fg=ModernStyle.COLORS['text_secondary'],
+            font=ModernStyle.FONTS['small'],
+            justify='left').pack(anchor='w', pady=5)
 
 # ================== ГОРЯЧИЕ КЛАВИШИ ==================
 def setup_keyboard_shortcuts():
