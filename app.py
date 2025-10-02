@@ -187,7 +187,8 @@ def create_toolbar(root):
         ("📥 Импорт", import_from_gsheet, 'Secondary.TButton', "Ctrl+I"),
         ("📄 Экспорт в Word", export_selected_to_word, 'Secondary.TButton', "Ctrl+W"),
         ("📊 Статистика", show_statistics, 'Secondary.TButton', ""),
-        ("🔔 Уведомления", show_notifications, 'Secondary.TButton', "F2")
+        ("🔔 Уведомления", show_notifications, 'Secondary.TButton', "F2"),
+        ("⚙️ Настройки", settings_window, 'Secondary.TButton', "")  # Новая кнопка
     ]
     
     for text, command, style_name, shortcut in buttons:
@@ -654,15 +655,17 @@ def export_selected_to_word():
     run_name = podpis.add_run("Дурандина А.В.")
     run_name.font.size = Pt(12)
 
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    # Используем путь из настроек или рабочий стол по умолчанию
+    export_path = settings_manager.get('default_export_path', os.path.join(os.path.expanduser("~"), "Desktop"))
+    
     safe_shift = shift_name.replace(" ", "_")
     safe_date = date_range.replace(" ", "_").replace(":", "-").replace(".", "-")
     file_name = f"{safe_shift}_{safe_date}.docx"
-    file_path = os.path.join(desktop, file_name)
+    file_path = os.path.join(export_path, file_name)
 
     try:
         doc.save(file_path)
-        messagebox.showinfo("Готово", f"Список сохранён на рабочем столе:\n{file_path}")
+        messagebox.showinfo("Готово", f"Список сохранён:\n{file_path}")
     except Exception as e:
         messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
 
