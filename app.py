@@ -180,20 +180,52 @@ def create_toolbar(root):
     toolbar_frame.pack(fill='x', padx=0, pady=0)
     
     buttons = [
-        ("➕ Добавить клиента", add_window, 'Primary.TButton'),
-        ("✏️ Редактировать", edit_client, 'Secondary.TButton'),
-        ("🗑️ Удалить", delete_selected, 'Secondary.TButton'),
-        ("👁️ Просмотр", lambda: quick_view(tree.item(tree.selection()[0], "values")[1] if tree.selection() else None), 'Secondary.TButton'),
-        ("📥 Импорт", import_from_gsheet, 'Secondary.TButton'),
-        ("📄 Экспорт в Word", export_selected_to_word, 'Secondary.TButton'),
-        ("📊 Статистика", show_statistics, 'Secondary.TButton')
+        ("➕ Добавить клиента", add_window, 'Primary.TButton', "Ctrl+N"),
+        ("✏️ Редактировать", edit_client, 'Secondary.TButton', "Ctrl+E"),
+        ("🗑️ Удалить", delete_selected, 'Secondary.TButton', "Delete"),
+        ("👁️ Просмотр", lambda: quick_view_wrapper(), 'Secondary.TButton', "Ctrl+Q"),
+        ("📥 Импорт", import_from_gsheet, 'Secondary.TButton', "Ctrl+I"),
+        ("📄 Экспорт в Word", export_selected_to_word, 'Secondary.TButton', "Ctrl+W"),
+        ("📊 Статистика", show_statistics, 'Secondary.TButton', ""),
+        ("🔔 Уведомления", show_notifications, 'Secondary.TButton', "F2")
     ]
     
-    for text, command, style_name in buttons:
+    for text, command, style_name, shortcut in buttons:
         btn = ttk.Button(toolbar_frame, text=text, command=command, style=style_name)
         btn.pack(side='left', padx=(0, 8))
+        
+        # Добавляем подсказку с горячей клавишей
+        if shortcut:
+            tooltip_text = f"{text} ({shortcut})"
+            create_tooltip(btn, tooltip_text)
+
+    # Кнопка справки
+    help_btn = ttk.Button(toolbar_frame, text="❓ Справка", 
+                         command=show_help, style='Secondary.TButton')
+    help_btn.pack(side='right')
+    create_tooltip(help_btn, "Справка по горячим клавишам (F1)")
     
     return toolbar_frame
+
+def create_tooltip(widget, text):
+    """Создание всплывающей подсказки"""
+    def on_enter(event):
+        tooltip = tk.Toplevel()
+        tooltip.wm_overrideredirect(True)
+        tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
+        
+        label = tk.Label(tooltip, text=text, background="#ffffe0", 
+                        relief='solid', borderwidth=1, font=ModernStyle.FONTS['small'])
+        label.pack()
+        
+        widget.tooltip = tooltip
+    
+    def on_leave(event):
+        if hasattr(widget, 'tooltip'):
+            widget.tooltip.destroy()
+    
+    widget.bind("<Enter>", on_enter)
+    widget.bind("<Leave>", on_leave)
 
 def create_modern_table(root):
     """Создание современной таблицы"""
@@ -300,16 +332,16 @@ def show_context_menu(event):
     client_name = f"{last_name} {first_name}"
     
     context_menu.add_command(
-        label=f"Редактировать: {client_name}", 
+        label=f"Редактировать: {client_name} (Ctrl+E)", 
         command=edit_client
     )
     context_menu.add_command(
-        label=f"Удалить: {client_name}", 
+        label=f"Удалить: {client_name} (Delete)", 
         command=delete_selected
     )
     context_menu.add_separator()
     context_menu.add_command(
-        label="Быстрый просмотр", 
+        label="Быстрый просмотр (Ctrl+Q)", 
         command=lambda: quick_view(client_id)
     )
     context_menu.add_command(
@@ -324,6 +356,11 @@ def show_context_menu(event):
     context_menu.add_command(
         label="Добавить в список Word", 
         command=lambda: add_to_word_list(item)
+    )
+    context_menu.add_separator()
+    context_menu.add_command(
+        label="Справка по горячим клавишам (F1)", 
+        command=show_help
     )
     
     try:
@@ -637,6 +674,327 @@ def export_selected_to_word():
     
     if hasattr(root, 'update_word_count'):
         root.update_word_count()
+
+# ================== СИСТЕМА УВЕДОМЛЕНИЙ ==================
+class NotificationSystem:
+    def __init__(self):
+        self.notifications = []
+        self.setup_daily_checks()
+    
+    def setup_daily_checks(self):
+        """Настройка ежедневных проверок"""
+        self.check_birthdays()
+        self.check_ippcu_expiry()
+        self.check_empty_contracts()
+    
+    def check_birthdays(self):
+        """Проверка ближайших дней рождений"""
+        today = datetime.today().date()
+        next_week = today + timedelta(days=7)
+        
+        with sqlite3.connect(DB_NAME) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT last_name, first_name, middle_name, dob 
+                FROM clients 
+                WHERE substr(dob, 6, 5) BETWEEN ? AND ?
+            """, (today.strftime("%m-%d"), next_week.strftime("%m-%d")))
+            
+            birthdays = cur.fetchall()
+        
+        for last, first, middle, dob in birthdays:
+            try:
+                bday = datetime.strptime(dob, "%Y-%m-%d").date()
+                bday_this_year = bday.replace(year=today.year)
+                days_until = (bday_this_year - today).days
+                if days_until >= 0:
+                    self.add_notification(
+                        "birthday", 
+                        f"День рождения у {last} {first} {middle or ''} через {days_until} дн. ({bday.strftime('%d.%m.%Y')})",
+                        "info" if days_until > 3 else "warning"
+                    )
+            except:
+                continue
+    
+    def check_ippcu_expiry(self):
+        """Проверка истекающих ИППСУ"""
+        today = datetime.today().date()
+        
+        with sqlite3.connect(DB_NAME) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT last_name, first_name, ippcu_end 
+                FROM clients 
+                WHERE ippcu_end IS NOT NULL AND ippcu_end != ''
+            """)
+            
+            clients = cur.fetchall()
+        
+        for last, first, ippcu_end in clients:
+            try:
+                end_date = datetime.strptime(ippcu_end, "%Y-%m-%d").date()
+                days_left = (end_date - today).days
+                
+                if 0 < days_left <= 7:
+                    self.add_notification(
+                        "ippcu_warning",
+                        f"ИППСУ {last} {first} истекает через {days_left} дн.",
+                        "warning"
+                    )
+                elif days_left == 0:
+                    self.add_notification(
+                        "ippcu_urgent",
+                        f"СРОЧНО: ИППСУ {last} {first} истекает сегодня!",
+                        "error"
+                    )
+                elif days_left < 0:
+                    self.add_notification(
+                        "ippcu_expired",
+                        f"ПРОСРОЧЕНО: ИППСУ {last} {first} ({abs(days_left)} дн. назад)",
+                        "error"
+                    )
+            except:
+                continue
+    
+    def check_empty_contracts(self):
+        """Проверка клиентов без договоров"""
+        with sqlite3.connect(DB_NAME) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT last_name, first_name 
+                FROM clients 
+                WHERE contract_number IS NULL OR contract_number = '' OR contract_number = 'не указан'
+            """)
+            
+            empty_contracts = cur.fetchall()
+        
+        if empty_contracts:
+            self.add_notification(
+                "empty_contracts",
+                f"Найдено {len(empty_contracts)} клиентов без номера договора",
+                "warning"
+            )
+    
+    def add_notification(self, category, message, level="info"):
+        """Добавление уведомления"""
+        self.notifications.append({
+            "timestamp": datetime.now(),
+            "category": category,
+            "message": message,
+            "level": level,
+            "read": False
+        })
+    
+    def show_daily_reminders(self):
+        """Показать ежедневные напоминания"""
+        if not self.notifications:
+            return
+        
+        unread = [n for n in self.notifications if not n['read']]
+        if unread:
+            self.show_notification_window()
+    
+    def show_notification_window(self):
+        """Окно уведомлений"""
+        if not hasattr(self, 'notification_window') or not self.notification_window.winfo_exists():
+            self.create_notification_window()
+        
+        self.update_notification_list()
+    
+    def create_notification_window(self):
+        """Создание окна уведомлений"""
+        self.notification_window = tk.Toplevel(root)
+        self.notification_window.title("Уведомления")
+        self.notification_window.geometry("500x400")
+        self.notification_window.configure(bg=ModernStyle.COLORS['background'])
+        
+        # Заголовок
+        header = tk.Frame(self.notification_window, bg=ModernStyle.COLORS['primary'], height=50)
+        header.pack(fill='x', padx=0, pady=0)
+        
+        tk.Label(header, text="🔔 Уведомления", 
+                bg=ModernStyle.COLORS['primary'],
+                fg='white',
+                font=ModernStyle.FONTS['h2']).pack(pady=10)
+        
+        # Список уведомлений
+        notification_frame = tk.Frame(self.notification_window, bg=ModernStyle.COLORS['background'])
+        notification_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        self.notification_list = tk.Listbox(notification_frame, 
+                                          font=ModernStyle.FONTS['body'],
+                                          bg=ModernStyle.COLORS['surface'],
+                                          relief='flat',
+                                          selectmode='single')
+        self.notification_list.pack(fill='both', expand=True)
+        
+        # Кнопки
+        button_frame = tk.Frame(self.notification_window, bg=ModernStyle.COLORS['background'])
+        button_frame.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Button(button_frame, text="Пометить как прочитанные", 
+                  style='Primary.TButton',
+                  command=self.mark_all_read).pack(side='left', padx=(0, 10))
+        
+        ttk.Button(button_frame, text="Очистить все", 
+                  style='Secondary.TButton',
+                  command=self.clear_all).pack(side='left')
+        
+        ttk.Button(button_frame, text="Закрыть", 
+                  style='Secondary.TButton',
+                  command=self.notification_window.destroy).pack(side='right')
+        
+        # Двойной клик для пометки как прочитанного
+        self.notification_list.bind('<Double-1>', lambda e: self.mark_selected_read())
+    
+    def update_notification_list(self):
+        """Обновление списка уведомлений"""
+        if hasattr(self, 'notification_list'):
+            self.notification_list.delete(0, tk.END)
+            
+            for notification in sorted(self.notifications, 
+                                     key=lambda x: x['timestamp'], reverse=True):
+                level_icon = {
+                    'info': 'ℹ️',
+                    'warning': '⚠️', 
+                    'error': '❌'
+                }.get(notification['level'], '📌')
+                
+                status_icon = '✅' if notification['read'] else '🔔'
+                time_str = notification['timestamp'].strftime("%H:%M")
+                
+                display_text = f"{status_icon} {level_icon} [{time_str}] {notification['message']}"
+                self.notification_list.insert(tk.END, display_text)
+    
+    def mark_selected_read(self):
+        """Пометить выбранное уведомление как прочитанное"""
+        selection = self.notification_list.curselection()
+        if selection:
+            index = selection[0]
+            # Находим соответствующее уведомление (учитываем обратный порядок)
+            actual_index = len(self.notifications) - 1 - index
+            if 0 <= actual_index < len(self.notifications):
+                self.notifications[actual_index]['read'] = True
+            self.update_notification_list()
+    
+    def mark_all_read(self):
+        """Пометить все как прочитанные"""
+        for notification in self.notifications:
+            notification['read'] = True
+        self.update_notification_list()
+    
+    def clear_all(self):
+        """Очистить все уведомления"""
+        self.notifications = []
+        self.update_notification_list()
+
+# Глобальный экземпляр системы уведомлений
+notification_system = NotificationSystem()
+
+    def show_notifications():
+    """Показать уведомления (вызывается из меню)"""
+    notification_system.show_notification_window()
+
+# ================== ГОРЯЧИЕ КЛАВИШИ ==================
+    def setup_keyboard_shortcuts():
+    """Настройка горячих клавиш"""
+    
+    # Основные команды
+    root.bind('<Control-n>', lambda e: add_window())
+    root.bind('<Control-f>', lambda e: root.search_entry.focus())
+    root.bind('<Control-s>', lambda e: do_search())
+    root.bind('<Delete>', lambda e: delete_selected())
+    root.bind('<F5>', lambda e: refresh_tree())
+    root.bind('<F1>', lambda e: show_help())
+    
+    # Навигация
+    root.bind('<Control-q>', lambda e: quick_view_wrapper())
+    root.bind('<Control-e>', lambda e: edit_client())
+    root.bind('<Control-i>', lambda e: import_from_gsheet())
+    root.bind('<Control-w>', lambda e: export_selected_to_word())
+    
+    # Уведомления
+    root.bind('<F2>', lambda e: show_notifications())
+    
+    # Сообщение в статусной строке о горячих клавишах
+    show_status_message("Горячие клавиши активированы. Нажмите F1 для справки.")
+
+def quick_view_wrapper():
+    """Обертка для быстрого просмотра с горячей клавишей"""
+    selected = tree.selection()
+    if selected:
+        client_id = tree.item(selected[0], "values")[1]
+        quick_view(client_id)
+    else:
+        messagebox.showinfo("Подсказка", "Выберите клиента для быстрого просмотра")
+
+def show_help():
+    """Окно справки по горячим клавишам"""
+    help_text = """
+📋 ГОРЯЧИЕ КЛАВИШИ:
+
+Основные команды:
+Ctrl+N - Добавить клиента
+Ctrl+F - Перейти в поиск
+Ctrl+S - Выполнить поиск
+Delete - Удалить выбранного
+F5 - Обновить список
+
+Навигация:
+Ctrl+Q - Быстрый просмотр
+Ctrl+E - Редактировать
+Ctrl+I - Импорт из Google Sheets  
+Ctrl+W - Экспорт в Word
+
+Уведомления:
+F2 - Показать уведомления
+
+Справка:
+F1 - Показать эту справку
+
+Управление таблицей:
+←/→ - Изменить ширину колонки
+Double Click - Автоподбор колонки
+Правый клик - Контекстное меню
+"""
+    
+    help_window = tk.Toplevel(root)
+    help_window.title("Справка по горячим клавишам")
+    help_window.geometry("500x500")
+    help_window.configure(bg=ModernStyle.COLORS['background'])
+    
+    # Заголовок
+    header = tk.Frame(help_window, bg=ModernStyle.COLORS['primary'], height=50)
+    header.pack(fill='x', padx=0, pady=0)
+    
+    tk.Label(header, text="⌨️ Горячие клавиши", 
+            bg=ModernStyle.COLORS['primary'],
+            fg='white',
+            font=ModernStyle.FONTS['h2']).pack(pady=10)
+    
+    # Текст справки
+    text_frame = tk.Frame(help_window, bg=ModernStyle.COLORS['background'])
+    text_frame.pack(fill='both', expand=True, padx=20, pady=20)
+    
+    help_text_widget = tk.Text(text_frame, 
+                              font=ModernStyle.FONTS['body'],
+                              bg=ModernStyle.COLORS['surface'],
+                              fg=ModernStyle.COLORS['text_primary'],
+                              wrap='word',
+                              padx=10,
+                              pady=10)
+    help_text_widget.pack(fill='both', expand=True)
+    
+    help_text_widget.insert('1.0', help_text)
+    help_text_widget.config(state='disabled')  # Только для чтения
+    
+    # Кнопка закрытия
+    button_frame = tk.Frame(help_window, bg=ModernStyle.COLORS['background'])
+    button_frame.pack(fill='x', padx=20, pady=10)
+    
+    ttk.Button(button_frame, text="Закрыть", 
+              style='Primary.TButton',
+              command=help_window.destroy).pack(side='right')
 
 # ================== База данных ==================
 def init_db():
@@ -1102,6 +1460,9 @@ def main():
     setup_initial_columns(tree)
     setup_tree_behavior(tree)
     
+    # Настройка горячих клавиш
+    setup_keyboard_shortcuts()
+    
     # Привязка событий
     tree.bind("<Button-3>", show_context_menu)
     tree.bind("<Button-1>", toggle_check)
@@ -1110,6 +1471,9 @@ def main():
     init_db()
     root.after(200, refresh_tree)
     root.after(1000, check_expiring_ippcu)
+    
+    # Показать уведомления при запуске (через 2 секунды)
+    root.after(2000, notification_system.show_daily_reminders)
 
     # при старте проверяем обновления
     root.after(100, updater.auto_update)
