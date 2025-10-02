@@ -14,7 +14,9 @@ from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from tkinter import simpledialog
-
+from chat_manager import ChatManager
+from chat_ui import ChatUI
+from chat_notifications import ChatNotifications
 
 # ================== Пути ==================
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyApp")
@@ -67,6 +69,9 @@ class SettingsManager:
 
 # Глобальный экземпляр менеджера настроек
 settings_manager = SettingsManager()
+
+chat_manager = ChatManager()
+chat_notifications = ChatNotifications(chat_manager)
 
 # ================== СОВРЕМЕННЫЙ СТИЛЬ ==================
 class ModernStyle:
@@ -1599,17 +1604,69 @@ def main():
     setup_modern_style()
     root.configure(bg=ModernStyle.COLORS['background'])
     
-    # Создание интерфейса
-    header = create_modern_header(root)
-    search_entry, date_from_entry, date_to_entry, search_frame = create_search_panel(root)
-    toolbar = create_toolbar(root)
-    tree, table_container = create_modern_table(root)
-    status_bar = create_status_bar(root)
+    # Создание Notebook для вкладок
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill='both', expand=True, padx=10, pady=10)
+    
+    # === ОСНОВНАЯ ВКЛАДКА - КЛИЕНТЫ ===
+    main_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
+    notebook.add(main_frame, text="📋 Клиенты")
+    
+    # Создание интерфейса в основной вкладке
+    header = create_modern_header(main_frame)
+    search_entry, date_from_entry, date_to_entry, search_frame = create_search_panel(main_frame)
+    toolbar = create_toolbar(main_frame)
+    tree, table_container = create_modern_table(main_frame)
+    status_bar = create_status_bar(main_frame)
     
     # Сохраняем ссылки на элементы
     root.search_entry = search_entry
     root.date_from_entry = date_from_entry
     root.date_to_entry = date_to_entry
+    
+    # === ВКЛАДКА ЧАТА ===
+    try:
+        from chat_manager import ChatManager
+        from chat_ui import ChatUI
+        from chat_notifications import ChatNotifications
+        
+        # Инициализация чата
+        chat_manager = ChatManager()
+        chat_notifications = ChatNotifications(chat_manager)
+        
+        # Создание UI чата
+        chat_ui = ChatUI(notebook, chat_manager, ModernStyle.COLORS, ModernStyle.FONTS)
+        chat_frame = chat_ui.get_widget()
+        notebook.add(chat_frame, text="💬 Чат сотрудников")
+        
+        # Сохраняем ссылки для доступа из других функций
+        root.chat_manager = chat_manager
+        root.chat_ui = chat_ui
+        root.chat_notifications = chat_notifications
+        
+        # Функция периодического обновления чата
+        def update_chat_periodically():
+            if hasattr(root, 'chat_ui'):
+                root.chat_ui.refresh_chat()
+                root.chat_ui.update_unread_count()
+            root.after(30000, update_chat_periodically)  # Обновление каждые 30 секунд
+        
+        # Запускаем периодическое обновление чата
+        root.after(5000, update_chat_periodically)
+        
+    except ImportError as e:
+        print(f"Модули чата не найдены: {e}")
+        # Создаем заглушку для вкладки чата
+        chat_stub_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
+        notebook.add(chat_stub_frame, text="💬 Чат (недоступен)")
+        
+        stub_label = tk.Label(chat_stub_frame, 
+                            text="Модуль чата не установлен\n\nДля использования чата установите необходимые зависимости",
+                            bg=ModernStyle.COLORS['background'],
+                            fg=ModernStyle.COLORS['text_secondary'],
+                            font=ModernStyle.FONTS['h3'],
+                            justify='center')
+        stub_label.pack(expand=True, fill='both', padx=20, pady=20)
     
     # Настройка таблицы
     setup_initial_columns(tree)
@@ -1622,17 +1679,32 @@ def main():
     tree.bind("<Button-3>", show_context_menu)
     tree.bind("<Button-1>", toggle_check)
     
-    # Инициализация
+    # Инициализация базы данных
     init_db()
-    root.after(200, refresh_tree)
-    root.after(1000, check_expiring_ippcu)
     
-    # Показать уведомления при запуске (через 2 секунды)
+    # Отложенные операции
+    root.after(200, refresh_tree)  # Обновление таблицы
+    root.after(1000, check_expiring_ippcu)  # Проверка ИППСУ
+    
+    # Показать уведомления при запуске
     root.after(2000, notification_system.show_daily_reminders)
-
-    # при старте проверяем обновления
+    
+    # Проверка обновлений
     root.after(100, updater.auto_update)
-
+    
+    # Установка пользователя онлайн в чате (если чат доступен)
+    if hasattr(root, 'chat_manager'):
+        root.after(3000, lambda: root.chat_manager.set_user_online(True))
+    
+    # Обработка закрытия приложения
+    def on_closing():
+        # Установка пользователя оффлайн в чате
+        if hasattr(root, 'chat_manager'):
+            root.chat_manager.set_user_online(False)
+        root.destroy()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    
     root.mainloop()
 
 if __name__ == "__main__":
