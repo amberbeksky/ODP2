@@ -899,7 +899,7 @@ def show_notifications():
     notification_system.show_notification_window()
 
 # ================== ГОРЯЧИЕ КЛАВИШИ ==================
-    def setup_keyboard_shortcuts():
+def setup_keyboard_shortcuts():
     """Настройка горячих клавиш"""
     
     # Основные команды
