@@ -14,6 +14,7 @@ from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from tkinter import simpledialog
+import time
 
 # ================== Пути ==================
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyApp")
@@ -336,11 +337,29 @@ def quick_view(client_id):
     messagebox.showinfo("Информация о клиенте", info_text)
 
 # ================== ФУНКЦИИ АУТЕНТИФИКАЦИИ ==================
+def check_auth_status():
+    """Проверка статуса авторизации"""
+    if not AUTH_AVAILABLE:
+        return True  # Пропускаем проверку если модуль недоступен
+    
+    if auth_manager and hasattr(auth_manager, 'current_user') and auth_manager.current_user:
+        return True
+    return False
+
+def require_auth(func):
+    """Декоратор для проверки авторизации"""
+    def wrapper(*args, **kwargs):
+        if not check_auth_status():
+            show_login_window()
+            return None
+        return func(*args, **kwargs)
+    return wrapper
+
 def show_login_window():
     """Окно входа в систему"""
     login_window = tk.Toplevel(root)
     login_window.title("Авторизация - Отделение дневного пребывания")
-    login_window.geometry("450x400")
+    login_window.geometry("450x450")
     login_window.configure(bg=ModernStyle.COLORS['background'])
     login_window.resizable(False, False)
     
@@ -450,17 +469,48 @@ def show_login_window():
                 show_status_message(f"Добро пожаловать, {auth_manager.get_user_display_name()}!")
             else:
                 print(f"DEBUG: Login failed: {message}")  # ДЕБАГ
-                messagebox.showerror("Ошибка входа", message)
+                # Показываем конкретную ошибку
+                if "locked" in message.lower():
+                    retry = messagebox.askretrycancel(
+                        "Ошибка базы данных", 
+                        "База данных временно заблокирована. Повторить попытку?"
+                    )
+                    if retry:
+                        root.after(1000, attempt_login)  # Повторить через 1 секунду
+                else:
+                    messagebox.showerror("Ошибка входа", message)
                 password_var.set("")
                 password_entry.focus()
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e):
+                retry = messagebox.askretrycancel(
+                    "Ошибка базы данных", 
+                    "База данных заблокирована. Закройте другие экземпляры программы и попробуйте снова."
+                )
+                if retry:
+                    root.after(1000, attempt_login)
+            else:
+                messagebox.showerror("Ошибка", f"Ошибка при входе: {e}")
         except Exception as e:
             print(f"DEBUG: Login exception: {e}")  # ДЕБАГ
             messagebox.showerror("Ошибка", f"Ошибка при входе: {e}")
     
+    # Кнопка Войти
     login_btn = ttk.Button(button_frame, text="Войти", 
                           style='Primary.TButton',
                           command=attempt_login)
     login_btn.pack(fill='x', pady=5)
+    
+    # Кнопка Отмена
+    def cancel_login():
+        login_window.destroy()
+        if not check_auth_status():
+            root.destroy()
+    
+    cancel_btn = ttk.Button(button_frame, text="Отмена", 
+                           style='Secondary.TButton',
+                           command=cancel_login)
+    cancel_btn.pack(fill='x', pady=5)
     
     # Обработка нажатия Enter
     def on_enter_pressed(event):
@@ -1152,102 +1202,117 @@ def join_fio(last, first, middle):
 
 # ================== База данных ==================
 def init_db():
-    """Создаёт новую схему или мигрирует старую (если есть колонка fio)."""
-    with sqlite3.connect(DB_NAME) as conn:
-        cur = conn.cursor()
-        
-        # Проверяем существование таблицы clients
-        cur.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name='clients'
-        """)
-        table_exists = cur.fetchone() is not None
-        
-        if not table_exists:
-            print("Создаем таблицу clients...")
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS clients (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    last_name TEXT NOT NULL,
-                    first_name TEXT NOT NULL,
-                    middle_name TEXT,
-                    dob TEXT NOT NULL,
-                    phone TEXT,
-                    contract_number TEXT,
-                    ippcu_start TEXT,
-                    ippcu_end TEXT,
-                    group_name TEXT,
-                    UNIQUE(last_name, first_name, middle_name, dob)
-                )
-                """
-            )
-            conn.commit()
-            print("Таблица clients создана успешно")
-            return
-
-        # Проверяем структуру существующей таблицы
-        cur.execute("PRAGMA table_info(clients)")
-        cols = [r[1] for r in cur.fetchall()]
-
-        if "fio" in cols and "last_name" not in cols:
-            print("Мигрируем старую схему...")
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS clients_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    last_name TEXT NOT NULL,
-                    first_name TEXT NOT NULL,
-                    middle_name TEXT,
-                    dob TEXT NOT NULL,
-                    phone TEXT,
-                    contract_number TEXT,
-                    ippcu_start TEXT,
-                    ippcu_end TEXT,
-                    group_name TEXT,
-                    UNIQUE(last_name, first_name, middle_name, dob)
-                )
-                """
-            )
-            cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
-            rows = cur.fetchall()
-            for r in rows:
-                _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
-                last, first, middle = split_fio(fio or "")
-                dob_val = dob or ""
-                try:
+    """Создаёт новую схему или мигрирует старую с обработкой блокировок"""
+    max_retries = 5
+    retry_delay = 0.1
+    
+    for attempt in range(max_retries):
+        try:
+            with sqlite3.connect(DB_NAME, timeout=10.0) as conn:
+                cur = conn.cursor()
+                
+                # Проверяем существование таблицы clients
+                cur.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='clients'
+                """)
+                table_exists = cur.fetchone() is not None
+                
+                if not table_exists:
+                    print("Создаем таблицу clients...")
                     cur.execute(
                         """
-                        INSERT OR IGNORE INTO clients_new
-                        (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (None, last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                        CREATE TABLE IF NOT EXISTS clients (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            last_name TEXT NOT NULL,
+                            first_name TEXT NOT NULL,
+                            middle_name TEXT,
+                            dob TEXT NOT NULL,
+                            phone TEXT,
+                            contract_number TEXT,
+                            ippcu_start TEXT,
+                            ippcu_end TEXT,
+                            group_name TEXT,
+                            UNIQUE(last_name, first_name, middle_name, dob)
+                        )
+                        """
                     )
-                except Exception:
+                    conn.commit()
+                    print("Таблица clients создана успешно")
+                    return
+
+                # Проверяем структуру существующей таблицы
+                cur.execute("PRAGMA table_info(clients)")
+                cols = [r[1] for r in cur.fetchall()]
+
+                if "fio" in cols and "last_name" not in cols:
+                    print("Мигрируем старую схему...")
                     cur.execute(
-                        "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
-                        (last or "", first or "", middle or "", dob_val)
+                        """
+                        CREATE TABLE IF NOT EXISTS clients_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            last_name TEXT NOT NULL,
+                            first_name TEXT NOT NULL,
+                            middle_name TEXT,
+                            dob TEXT NOT NULL,
+                            phone TEXT,
+                            contract_number TEXT,
+                            ippcu_start TEXT,
+                            ippcu_end TEXT,
+                            group_name TEXT,
+                            UNIQUE(last_name, first_name, middle_name, dob)
+                        )
+                        """
                     )
-            cur.execute("DROP TABLE clients")
-            cur.execute("ALTER TABLE clients_new RENAME TO clients")
-            conn.commit()
-            print("Миграция завершена успешно")
-            return
+                    cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
+                    rows = cur.fetchall()
+                    for r in rows:
+                        _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
+                        last, first, middle = split_fio(fio or "")
+                        dob_val = dob or ""
+                        try:
+                            cur.execute(
+                                """
+                                INSERT OR IGNORE INTO clients_new
+                                (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (None, last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                            )
+                        except Exception:
+                            cur.execute(
+                                "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
+                                (last or "", first or "", middle or "", dob_val)
+                            )
+                    cur.execute("DROP TABLE clients")
+                    cur.execute("ALTER TABLE clients_new RENAME TO clients")
+                    conn.commit()
+                    print("Миграция завершена успешно")
+                    return
 
-        # Добавляем отсутствующие колонки если нужно
-        try:
-            if "last_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
-            if "first_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN first_name TEXT")
-            if "middle_name" not in cols:
-                cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
-            conn.commit()
-        except Exception as e:
-            print(f"Ошибка при добавлении колонок: {e}")
+                # Добавляем отсутствующие колонки если нужно
+                try:
+                    if "last_name" not in cols:
+                        cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
+                    if "first_name" not in cols:
+                        cur.execute("ALTER TABLE clients ADD COLUMN first_name TEXT")
+                    if "middle_name" not in cols:
+                        cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
+                    conn.commit()
+                except Exception as e:
+                    print(f"Ошибка при добавлении колонок: {e}")
 
-        print("База данных инициализирована успешно")
+                print("База данных инициализирована успешно")
+                break
+                
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e) and attempt < max_retries - 1:
+                print(f"База данных заблокирована, повторная попытка {attempt + 1}/{max_retries}...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+            else:
+                print(f"❌ Ошибка инициализации БД: {e}")
+                raise e
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
     """Добавление с проверкой дублей (по ФИО+дата рождения, без учёта регистра)."""
@@ -1540,6 +1605,12 @@ def create_status_bar(root):
     status_frame.pack(fill='x', side='bottom', padx=0, pady=0)
     status_frame.pack_propagate(False)
     
+    # Индикатор состояния БД
+    db_status_label = tk.Label(status_frame, text="🟢 БД", 
+                              bg=ModernStyle.COLORS['primary'],
+                              fg='white', font=ModernStyle.FONTS['small'])
+    db_status_label.pack(side='left', padx=(10, 0), pady=5)
+    
     status_label = tk.Label(status_frame, text="Готово", 
                            bg=ModernStyle.COLORS['primary'],
                            fg='white', font=ModernStyle.FONTS['small'])
@@ -1559,13 +1630,25 @@ def create_status_bar(root):
     root.status_label = status_label
     root.word_count_label = word_count_label
     root.user_status_label = user_status_label
+    root.db_status_label = db_status_label
     
     def update_word_count():
         count = sum(1 for row_id in tree.get_children() 
                    if tree.item(row_id, "values")[0] == "X")
         word_count_label.config(text=f"Выбрано для Word: {count}")
     
+    def update_db_status():
+        try:
+            with sqlite3.connect(DB_NAME, timeout=5.0) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+            db_status_label.config(text="🟢 БД")
+        except sqlite3.OperationalError:
+            db_status_label.config(text="🔴 БД")
+        root.after(5000, update_db_status)  # Проверять каждые 5 секунд
+    
     root.update_word_count = update_word_count
+    root.after(1000, update_db_status)
     return status_frame
 
 # ================== НАСТРОЙКИ ==================
@@ -2199,28 +2282,34 @@ def main():
     root.geometry("1400x900")
     root.configure(bg=ModernStyle.COLORS['background'])
     
-    # Инициализация системы аутентификации ПЕРВОЙ
-    setup_auth_system()
+    # Показываем сообщение о загрузке
+    loading_label = tk.Label(root, text="Загрузка приложения...", 
+                            bg=ModernStyle.COLORS['background'],
+                            font=ModernStyle.FONTS['h2'])
+    loading_label.pack(expand=True)
+    root.update()
     
-    print(f"DEBUG: AUTH_AVAILABLE = {AUTH_AVAILABLE}")
-    print(f"DEBUG: auth_manager = {auth_manager}")
-    
-    # Показываем окно входа только если нет запомненного пользователя
-    if AUTH_AVAILABLE and auth_manager and (not getattr(auth_manager, 'current_user', None) or not getattr(auth_manager, 'remember_me', False)):
-        print("DEBUG: Showing login window")
-        show_login_window()
-    else:
-        # Если пользователь запомнен или аутентификация отключена, сразу инициализируем приложение
-        print("DEBUG: Auto-initializing main application")
-        initialize_main_application()
-    
-    # Запускаем главный цикл
     try:
+        # Инициализация системы аутентификации
+        setup_auth_system()
+        
+        # Инициализация БД
+        init_db()
+        
+        loading_label.destroy()
+        
+        # Показываем окно входа или основное приложение
+        if AUTH_AVAILABLE and auth_manager and (not getattr(auth_manager, 'current_user', None) or not getattr(auth_manager, 'remember_me', False)):
+            show_login_window()
+        else:
+            initialize_main_application()
+            
         root.mainloop()
+        
     except Exception as e:
-        print(f"❌ Критическая ошибка: {e}")
         messagebox.showerror("Критическая ошибка", 
-                           f"Приложение завершено с ошибкой:\n{e}")
+                           f"Не удалось запустить приложение:\n{e}")
+        root.destroy()
 
 def initialize_main_application():
     """Инициализация основного приложения после авторизации"""
