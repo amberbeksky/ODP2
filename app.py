@@ -22,6 +22,14 @@ os.makedirs(APP_DIR, exist_ok=True)
 DB_NAME = os.path.join(APP_DIR, "clients.db")
 SHEET_ID = "1_DfTT8yzCjP0VH0PZu1Fz6FYMm1eRr7c0TmZU2DrH_w"
 
+# ================== ИМПОРТ МЕНЕДЖЕРА АУТЕНТИФИКАЦИИ ==================
+try:
+    from auth_manager import AuthManager
+    AUTH_AVAILABLE = True
+except ImportError:
+    AUTH_AVAILABLE = False
+    print("⚠️ Модуль auth_manager не найден. Аутентификация отключена.")
+
 # ================== Менеджер настроек ==================
 class SettingsManager:
     def __init__(self):
@@ -66,6 +74,277 @@ class SettingsManager:
 
 # Глобальный экземпляр менеджера настроек
 settings_manager = SettingsManager()
+
+# Глобальный экземпляр менеджера аутентификации
+auth_manager = None
+
+# ================== ФУНКЦИИ АУТЕНТИФИКАЦИИ ==================
+def show_login_window():
+    """Окно входа в систему"""
+    login_window = tk.Toplevel(root)
+    login_window.title("Авторизация - Отделение дневного пребывания")
+    login_window.geometry("450x400")
+    login_window.configure(bg=ModernStyle.COLORS['background'])
+    login_window.resizable(False, False)
+    
+    # Центрирование окна
+    login_window.transient(root)
+    login_window.grab_set()
+    
+    # Заголовок
+    header = tk.Frame(login_window, bg=ModernStyle.COLORS['primary'], height=80)
+    header.pack(fill='x', padx=0, pady=0)
+    
+    tk.Label(header, text="🔐 Авторизация", 
+            bg=ModernStyle.COLORS['primary'],
+            fg='white',
+            font=ModernStyle.FONTS['h1']).pack(pady=20)
+    
+    # Основное содержимое
+    content_frame = tk.Frame(login_window, bg=ModernStyle.COLORS['background'], padx=30, pady=30)
+    content_frame.pack(fill='both', expand=True)
+    
+    # Поля ввода
+    fields_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    fields_frame.pack(fill='both', expand=True, pady=20)
+    
+    # Логин
+    login_frame = tk.Frame(fields_frame, bg=ModernStyle.COLORS['background'])
+    login_frame.pack(fill='x', pady=10)
+    
+    tk.Label(login_frame, text="Логин:",
+            bg=ModernStyle.COLORS['background'],
+            fg=ModernStyle.COLORS['text_primary'],
+            font=ModernStyle.FONTS['body']).pack(anchor='w')
+    
+    login_var = tk.StringVar()
+    login_entry = tk.Entry(login_frame, textvariable=login_var,
+                          font=ModernStyle.FONTS['body'], width=30)
+    login_entry.pack(fill='x', pady=5)
+    
+    # Пароль
+    password_frame = tk.Frame(fields_frame, bg=ModernStyle.COLORS['background'])
+    password_frame.pack(fill='x', pady=10)
+    
+    tk.Label(password_frame, text="Пароль:",
+            bg=ModernStyle.COLORS['background'],
+            fg=ModernStyle.COLORS['text_primary'],
+            font=ModernStyle.FONTS['body']).pack(anchor='w')
+    
+    password_var = tk.StringVar()
+    password_entry = tk.Entry(password_frame, textvariable=password_var,
+                             show="•", font=ModernStyle.FONTS['body'], width=30)
+    password_entry.pack(fill='x', pady=5)
+    
+    # Чекбокс "Запомнить меня"
+    remember_var = tk.BooleanVar(value=True)
+    remember_frame = tk.Frame(fields_frame, bg=ModernStyle.COLORS['background'])
+    remember_frame.pack(fill='x', pady=10)
+    
+    remember_cb = tk.Checkbutton(remember_frame, 
+                                text="Запомнить меня на 30 дней",
+                                variable=remember_var,
+                                bg=ModernStyle.COLORS['background'],
+                                fg=ModernStyle.COLORS['text_primary'],
+                                font=ModernStyle.FONTS['small'],
+                                selectcolor=ModernStyle.COLORS['primary'])
+    remember_cb.pack(anchor='w')
+    
+    # Информация о пользователях
+    info_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['surface'],
+                         relief='solid', bd=1, padx=15, pady=10)
+    info_frame.pack(fill='x', pady=10)
+    
+    info_text = """Доступные пользователи:
+• admin / admin - Зеленков Д.В. (Администратор)
+• ДУРАНДИНА / 12345 - Дурандина А.В. (Заведующая)
+• ЛАВРОВА / 12345 - Лаврова А.А. (Сотрудник)"""
+    
+    tk.Label(info_frame, text=info_text,
+            bg=ModernStyle.COLORS['surface'],
+            fg=ModernStyle.COLORS['text_secondary'],
+            font=ModernStyle.FONTS['small'],
+            justify='left').pack(anchor='w')
+    
+    # Кнопки
+    button_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    button_frame.pack(fill='x', pady=10)
+    
+    def attempt_login():
+        username = login_var.get().strip()
+        password = password_var.get()
+        
+        if not username or not password:
+            messagebox.showerror("Ошибка", "Введите логин и пароль")
+            return
+        
+        success, message = auth_manager.login(username, password, remember_var.get())
+        
+        if success:
+            login_window.destroy()
+            initialize_application()
+            show_status_message(f"Добро пожаловать, {auth_manager.get_user_display_name()}!")
+        else:
+            messagebox.showerror("Ошибка входа", message)
+            password_var.set("")
+            password_entry.focus()
+    
+    login_btn = ttk.Button(button_frame, text="Войти", 
+                          style='Primary.TButton',
+                          command=attempt_login)
+    login_btn.pack(fill='x', pady=5)
+    
+    # Обработка нажатия Enter
+    def on_enter_pressed(event):
+        attempt_login()
+    
+    login_entry.bind('<Return>', on_enter_pressed)
+    password_entry.bind('<Return>', on_enter_pressed)
+    
+    # Фокус на поле логина
+    login_entry.focus()
+    
+    # Если есть запомненный пользователь, закрываем окно входа
+    if auth_manager.current_user:
+        login_window.destroy()
+        initialize_application()
+
+def show_user_profile():
+    """Окно профиля пользователя"""
+    if not auth_manager or not auth_manager.current_user:
+        messagebox.showinfo("Информация", "Вы не авторизованы")
+        return
+    
+    profile_window = tk.Toplevel(root)
+    profile_window.title("Профиль пользователя")
+    profile_window.geometry("450x350")
+    profile_window.configure(bg=ModernStyle.COLORS['background'])
+    profile_window.resizable(False, False)
+    
+    # Заголовок
+    header = tk.Frame(profile_window, bg=ModernStyle.COLORS['primary'], height=60)
+    header.pack(fill='x', padx=0, pady=0)
+    
+    tk.Label(header, text="👤 Профиль", 
+            bg=ModernStyle.COLORS['primary'],
+            fg='white',
+            font=ModernStyle.FONTS['h2']).pack(pady=15)
+    
+    # Основное содержимое
+    content_frame = tk.Frame(profile_window, bg=ModernStyle.COLORS['background'], padx=20, pady=20)
+    content_frame.pack(fill='both', expand=True)
+    
+    user_info = auth_manager.current_user
+    
+    # Информация о пользователе
+    info_text = f"""ФИО: {user_info['full_name']}
+Должность: {user_info['role']}
+Логин: {user_info['username']}
+Права доступа: {', '.join(user_info['permissions'])}
+Статус входа: {"Запомнен на 30 дней" if auth_manager.remember_me else "Требуется вход при запуске"}"""
+    
+    tk.Label(content_frame, text=info_text,
+            bg=ModernStyle.COLORS['background'],
+            fg=ModernStyle.COLORS['text_primary'],
+            font=ModernStyle.FONTS['body'],
+            justify='left').pack(anchor='w', pady=10)
+    
+    # Кнопки
+    button_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    button_frame.pack(fill='x', pady=20)
+    
+    def logout():
+        if messagebox.askyesno("Выход", "Вы уверены, что хотите выйти?"):
+            auth_manager.logout()
+            profile_window.destroy()
+            show_login_window()
+            update_ui_for_user()
+    
+    def clear_remember():
+        if messagebox.askyesno("Очистка", "Очистить запомненный вход?\nПри следующем запуске потребуется ввод логина и пароля."):
+            auth_manager.clear_remember_token()
+            auth_manager.remember_me = False
+            profile_window.destroy()
+            show_status_message("Запомненный вход очищен")
+    
+    ttk.Button(button_frame, text="Сменить пользователя", 
+              style='Primary.TButton',
+              command=logout).pack(side='right', padx=(10, 0))
+    
+    ttk.Button(button_frame, text="Очистить запомненный вход", 
+              style='Secondary.TButton',
+              command=clear_remember).pack(side='right', padx=(10, 0))
+    
+    ttk.Button(button_frame, text="Закрыть", 
+              style='Secondary.TButton',
+              command=profile_window.destroy).pack(side='right')
+
+def update_ui_for_user():
+    """Обновление интерфейса в зависимости от прав пользователя"""
+    if not auth_manager or not auth_manager.current_user:
+        return
+    
+    # Обновляем заголовок окна
+    root.title(f"Отделение дневного пребывания - {auth_manager.get_user_display_name()}")
+    
+    # Обновляем статусную строку
+    if hasattr(root, 'user_status_label'):
+        root.user_status_label.config(
+            text=f"Пользователь: {auth_manager.get_user_display_name()}"
+        )
+    
+    # Показываем/скрываем элементы в зависимости от прав
+    update_permissions_ui()
+
+def update_permissions_ui():
+    """Обновление видимости элементов по правам доступа"""
+    if not auth_manager or not auth_manager.current_user:
+        return
+    
+    # Пример ограничения функционала для разных ролей
+    if hasattr(root, 'add_btn'):
+        root.add_btn['state'] = 'normal' if auth_manager.has_permission('edit') else 'disabled'
+    
+    if hasattr(root, 'delete_btn'):
+        root.delete_btn['state'] = 'normal' if auth_manager.has_permission('delete') else 'disabled'
+
+def setup_auth_system():
+    """Настройка системы аутентификации"""
+    global auth_manager
+    
+    if not AUTH_AVAILABLE:
+        print("⚠️ Аутентификация отключена - модуль auth_manager не найден")
+        # Создаем заглушку для случая отсутствия модуля аутентификации
+        class AuthStub:
+            def __init__(self):
+                self.current_user = {
+                    'full_name': 'Демо-пользователь',
+                    'role': 'Сотрудник',
+                    'username': 'demo',
+                    'permissions': ['basic']
+                }
+                self.remember_me = False
+            
+            def get_user_display_name(self):
+                return "Демо-пользователь"
+            
+            def has_permission(self, permission):
+                return True
+            
+            def logout(self):
+                pass
+        
+        auth_manager = AuthStub()
+        return
+    
+    try:
+        auth_manager = AuthManager(DB_NAME)
+        # Очищаем просроченные токены при запуске
+        auth_manager.cleanup_expired_tokens()
+        print("✅ Система аутентификации инициализирована")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации аутентификации: {e}")
+        messagebox.showerror("Ошибка", f"Не удалось инициализировать систему аутентификации: {e}")
 
 # ================== СИСТЕМА УВЕДОМЛЕНИЙ ==================
 class NotificationSystem:
@@ -1171,10 +1450,22 @@ def create_toolbar(root):
         btn = ttk.Button(toolbar_frame, text=text, command=command, style=style_name)
         btn.pack(side='left', padx=(0, 8))
         
+        # Сохраняем ссылки на важные кнопки для управления правами
+        if text == "➕ Добавить клиента":
+            root.add_btn = btn
+        elif text == "🗑️ Удалить":
+            root.delete_btn = btn
+        
         # Добавляем подсказку с горячей клавишей
         if shortcut:
             tooltip_text = f"{text} ({shortcut})"
             create_tooltip(btn, tooltip_text)
+
+    # Кнопка профиля пользователя
+    if AUTH_AVAILABLE:
+        profile_btn = ttk.Button(toolbar_frame, text="👤 Профиль", 
+                               command=show_user_profile, style='Secondary.TButton')
+        profile_btn.pack(side='right', padx=(0, 8))
 
     # Кнопка справки
     help_btn = ttk.Button(toolbar_frame, text="❓ Справка", 
@@ -1183,67 +1474,6 @@ def create_toolbar(root):
     create_tooltip(help_btn, "Справка по горячим клавишам (F1)")
     
     return toolbar_frame
-
-def create_tooltip(widget, text):
-    """Создание всплывающей подсказки"""
-    def on_enter(event):
-        tooltip = tk.Toplevel()
-        tooltip.wm_overrideredirect(True)
-        tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
-        
-        label = tk.Label(tooltip, text=text, background="#ffffe0", 
-                        relief='solid', borderwidth=1, font=ModernStyle.FONTS['small'])
-        label.pack()
-        
-        widget.tooltip = tooltip
-    
-    def on_leave(event):
-        if hasattr(widget, 'tooltip'):
-            widget.tooltip.destroy()
-    
-    widget.bind("<Enter>", on_enter)
-    widget.bind("<Leave>", on_leave)
-
-def create_modern_table(root):
-    """Создание современной таблицы"""
-    table_container = tk.Frame(root, bg=ModernStyle.COLORS['background'], padx=20, pady=15)
-    table_container.pack(fill='both', expand=True, padx=0, pady=0)
-    
-    # Заголовок таблицы
-    table_header = tk.Frame(table_container, bg=ModernStyle.COLORS['background'])
-    table_header.pack(fill='x', pady=(0, 10))
-    
-    tk.Label(table_header, text="Список клиентов", 
-             bg=ModernStyle.COLORS['background'],
-             fg=ModernStyle.COLORS['text_primary'],
-             font=ModernStyle.FONTS['h2']).pack(side='left')
-    
-    # Контейнер для таблицы с тенью
-    table_wrapper = tk.Frame(table_container, bg=ModernStyle.COLORS['border'], 
-                            relief='solid', bd=1, padx=1, pady=1)
-    table_wrapper.pack(fill='both', expand=True)
-    
-    # Создаем таблицу с прокруткой
-    tree_scroll = ttk.Scrollbar(table_wrapper)
-    tree_scroll.pack(side='right', fill='y')
-    
-    tree = ttk.Treeview(
-        table_wrapper,
-        columns=("✓", "ID", "Фамилия", "Имя", "Отчество", "Дата рождения", "Телефон",
-                 "Номер договора", "Дата начала ИППСУ", "Дата окончания ИППСУ", "Группа"),
-        show="headings",
-        height=15,
-        style='Modern.Treeview',
-        yscrollcommand=tree_scroll.set
-    )
-    tree.pack(side='left', fill='both', expand=True)
-    tree_scroll.config(command=tree.yview)
-    
-    # Настраиваем колонки
-    for col in tree["columns"]:
-        tree.heading(col, text=col)
-    
-    return tree, table_container
 
 def create_status_bar(root):
     """Создание строки статуса"""
@@ -1261,8 +1491,15 @@ def create_status_bar(root):
                                fg='white', font=ModernStyle.FONTS['small'])
     word_count_label.pack(side='right', padx=10, pady=5)
     
+    # Индикатор пользователя
+    user_status_label = tk.Label(status_frame, text="Не авторизован", 
+                                bg=ModernStyle.COLORS['primary'],
+                                fg='white', font=ModernStyle.FONTS['small'])
+    user_status_label.pack(side='right', padx=10, pady=5)
+    
     root.status_label = status_label
     root.word_count_label = word_count_label
+    root.user_status_label = user_status_label
     
     def update_word_count():
         count = sum(1 for row_id in tree.get_children() 
@@ -1271,7 +1508,6 @@ def create_status_bar(root):
     
     root.update_word_count = update_word_count
     return status_frame
-
 # ================== НАСТРОЙКИ ==================
 def settings_window():
     """Окно настроек приложения"""
@@ -1887,160 +2123,179 @@ def create_chat_stub(notebook):
 
 # ================== MAIN ==================
 def main():
-    global root, tree
+    global root, tree, auth_manager
     
     # Инициализация главного окна
     root = tk.Tk()
-    root.title("Отделение дневного пребывания - Полустационарное обслуживание")
+    root.title("Отделение дневного пребывания - Авторизация")
     root.geometry("1400x900")
     root.configure(bg=ModernStyle.COLORS['background'])
     
-    # Инициализация базы данных ПЕРВОЙ
-    try:
-        init_db()
-        print("✅ База данных инициализирована")
-    except Exception as e:
-        print(f"❌ Ошибка инициализации БД: {e}")
-        messagebox.showerror("Ошибка", f"Не удалось инициализировать базу данных: {e}")
-        return  # Завершаем выполнение если БД не доступна
+    # Инициализация системы аутентификации ПЕРВОЙ
+    setup_auth_system()
     
-    # Инициализация системы уведомлений
-    try:
-        if notification_system.initialize():
-            print("✅ Система уведомлений инициализирована")
-        else:
-            print("⚠️ Система уведомлений отключена")
-    except Exception as e:
-        print(f"❌ Ошибка инициализации уведомлений: {e}")
+    # Показываем окно входа только если нет запомненного пользователя
+    if AUTH_AVAILABLE and (not auth_manager.current_user or not auth_manager.remember_me):
+        show_login_window()
+    else:
+        # Если пользователь запомнен или аутентификация отключена, сразу инициализируем приложение
+        root.after(100, initialize_main_application)
     
-    # Настройка современного стиля
-    setup_modern_style()
-    
-    # Создание Notebook для вкладок
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill='both', expand=True, padx=10, pady=10)
-    
-    # === ОСНОВНАЯ ВКЛАДКА - КЛИЕНТЫ ===
-    main_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
-    notebook.add(main_frame, text="📋 Клиенты")
-    
-    # Создание интерфейса в основной вкладке
-    header = create_modern_header(main_frame)
-    search_entry, date_from_entry, date_to_entry, search_frame = create_search_panel(main_frame)
-    toolbar = create_toolbar(main_frame)
-    tree, table_container = create_modern_table(main_frame)
-    status_bar = create_status_bar(main_frame)
-    
-    # Сохраняем ссылки на элементы
-    root.search_entry = search_entry
-    root.date_from_entry = date_from_entry
-    root.date_to_entry = date_to_entry
-    root.notebook = notebook
-    
-    # Настройка таблицы
-    setup_initial_columns(tree)
-    setup_tree_behavior(tree)
-    
-    # Настройка горячих клавиш
-    setup_keyboard_shortcuts()
-    
-    # Привязка событий
-    tree.bind("<Button-3>", show_context_menu)
-    tree.bind("<Button-1>", toggle_check)
-    
-    # === ВКЛАДКА ЧАТА ===
-    def initialize_chat():
-        if not initialize_chat_system(notebook):
-            create_chat_stub(notebook)
-    
-    # Инициализируем чат с задержкой
-    root.after(1000, initialize_chat)
-    
-    # === ОТЛОЖЕННЫЕ ОПЕРАЦИИ ===
-    
-    def initialize_application():
-        """Инициализация основных компонентов приложения"""
-        try:
-            # Загрузка данных в таблицу
-            refresh_tree()
-            print("✅ Таблица клиентов загружена")
-            
-            # Проверка обновлений
-            updater.auto_update()
-            print("✅ Проверка обновлений выполнена")
-            
-        except Exception as e:
-            print(f"❌ Ошибка инициализации приложения: {e}")
-            messagebox.showwarning("Предупреждение", 
-                                f"Некоторые функции могут работать некорректно: {e}")
-    
-    def initialize_notifications():
-        """Инициализация системы уведомлений"""
-        try:
-            if notification_system.is_initialized:
-                unread_count = notification_system.get_unread_count()
-                if unread_count > 0:
-                    # Показываем уведомления только если есть непрочитанные
-                    notification_system.show_notification_window()
-                    print(f"✅ Показано {unread_count} уведомлений")
-                else:
-                    print("✅ Непрочитанных уведомлений нет")
-        except Exception as e:
-            print(f"❌ Ошибка показа уведомлений: {e}")
-    
-    def initialize_security_checks():
-        """Инициализация проверок безопасности"""
-        try:
-            check_expiring_ippcu()
-            print("✅ Проверка ИППСУ выполнена")
-        except Exception as e:
-            print(f"❌ Ошибка проверки ИППСУ: {e}")
-    
-    # Планируем отложенные операции с правильным порядком
-    root.after(500, initialize_application)        # Основная инициализация
-    root.after(1500, initialize_security_checks)   # Проверки безопасности
-    root.after(3000, initialize_notifications)     # Уведомления (после загрузки данных)
-    
-    # === ОБРАБОТКА ЗАКРЫТИЯ ПРИЛОЖЕНИЯ ===
-    def on_closing():
-        """Обработчик закрытия приложения"""
-        try:
-            # Устанавливаем пользователя оффлайн в чате
-            if hasattr(root, 'chat_manager') and root.chat_manager:
-                root.chat_manager.set_user_online(False)
-                print("✅ Пользователь установлен как оффлайн")
-            
-            # Сохраняем настройки
-            settings_manager.save_settings()
-            print("✅ Настройки сохранены")
-            
-            # Очищаем старые уведомления
-            if notification_system.is_initialized:
-                notification_system.clear_old_notifications()
-                print("✅ Старые уведомления очищены")
-                
-        except Exception as e:
-            print(f"⚠️ Ошибка при завершении работы: {e}")
-        finally:
-            root.destroy()
-    
-    root.protocol("WM_DELETE_WINDOW", on_closing)
-    
-    # === СТАТУС ЗАПУСКА ===
-    def show_startup_status():
-        """Показать статус запуска в статусной строке"""
-        if hasattr(root, 'status_label'):
-            root.status_label.config(text="Приложение готово к работе")
-    
-    root.after(4000, show_startup_status)
-    
-    # Запуск главного цикла
+    # Запускаем главный цикл
     try:
         root.mainloop()
     except Exception as e:
         print(f"❌ Критическая ошибка: {e}")
         messagebox.showerror("Критическая ошибка", 
                            f"Приложение завершено с ошибкой:\n{e}")
+
+def initialize_main_application():
+    """Инициализация основного приложения после авторизации"""
+    try:
+        # Обновляем интерфейс для пользователя
+        update_ui_for_user()
+        
+        # Инициализация базы данных клиентов
+        init_db()
+        print("✅ База данных инициализирована")
+        
+        # Настройка современного стиля
+        setup_modern_style()
+        
+        # Создание Notebook для вкладок
+        notebook = ttk.Notebook(root)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # === ОСНОВНАЯ ВКЛАДКА - КЛИЕНТЫ ===
+        main_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
+        notebook.add(main_frame, text="📋 Клиенты")
+        
+        # Создание интерфейса в основной вкладке
+        header = create_modern_header(main_frame)
+        search_entry, date_from_entry, date_to_entry, search_frame = create_search_panel(main_frame)
+        toolbar = create_toolbar(main_frame)
+        tree, table_container = create_modern_table(main_frame)
+        status_bar = create_status_bar(main_frame)
+        
+        # Сохраняем ссылки на элементы
+        root.search_entry = search_entry
+        root.date_from_entry = date_from_entry
+        root.date_to_entry = date_to_entry
+        root.notebook = notebook
+        
+        # Настройка таблицы
+        setup_initial_columns(tree)
+        setup_tree_behavior(tree)
+        
+        # Настройка горячих клавиш
+        setup_keyboard_shortcuts()
+        setup_search_behavior()
+        
+        # Привязка событий
+        tree.bind("<Button-3>", show_context_menu)
+        tree.bind("<Button-1>", toggle_check)
+        
+        # === ВКЛАДКА ЧАТА ===
+        def initialize_chat():
+            if not initialize_chat_system(notebook):
+                create_chat_stub(notebook)
+        
+        # Инициализируем чат с задержкой
+        root.after(1000, initialize_chat)
+        
+        # === ОТЛОЖЕННЫЕ ОПЕРАЦИИ ===
+        
+        def load_application_data():
+            """Загрузка данных приложения"""
+            try:
+                # Загрузка данных в таблицу
+                refresh_tree()
+                print("✅ Таблица клиентов загружена")
+                
+                # Проверка обновлений
+                updater.auto_update()
+                print("✅ Проверка обновлений выполнена")
+                
+            except Exception as e:
+                print(f"❌ Ошибка загрузки данных приложения: {e}")
+                messagebox.showwarning("Предупреждение", 
+                                    f"Некоторые функции могут работать некорректно: {e}")
+        
+        def initialize_notifications():
+            """Инициализация системы уведомлений"""
+            try:
+                if notification_system.initialize():
+                    print("✅ Система уведомлений инициализирована")
+                    
+                    unread_count = notification_system.get_unread_count()
+                    if unread_count > 0:
+                        print(f"✅ Найдено {unread_count} непрочитанных уведомлений")
+                    else:
+                        print("✅ Непрочитанных уведомлений нет")
+                else:
+                    print("⚠️ Система уведомлений отключена")
+            except Exception as e:
+                print(f"❌ Ошибка инициализации уведомлений: {e}")
+        
+        def initialize_security_checks():
+            """Инициализация проверок безопасности"""
+            try:
+                check_expiring_ippcu()
+                print("✅ Проверка ИППСУ выполнена")
+            except Exception as e:
+                print(f"❌ Ошибка проверки ИППСУ: {e}")
+        
+        def show_welcome_message():
+            """Показать приветственное сообщение"""
+            if AUTH_AVAILABLE and auth_manager.remember_me:
+                show_status_message(f"Автоматический вход: {auth_manager.get_user_display_name()}")
+            elif AUTH_AVAILABLE:
+                show_status_message(f"Добро пожаловать, {auth_manager.get_user_display_name()}!")
+            else:
+                show_status_message("Демо-режим: аутентификация отключена")
+        
+        # Планируем отложенные операции с правильным порядком
+        root.after(500, load_application_data)        # Загрузка данных
+        root.after(1000, initialize_notifications)    # Уведомления
+        root.after(1500, initialize_security_checks)  # Проверки безопасности
+        root.after(2000, show_welcome_message)        # Приветственное сообщение
+        
+        # === ОБРАБОТКА ЗАКРЫТИЯ ПРИЛОЖЕНИЯ ===
+        def on_closing():
+            """Обработчик закрытия приложения"""
+            try:
+                # Устанавливаем пользователя оффлайн в чате
+                if hasattr(root, 'chat_manager') and root.chat_manager:
+                    root.chat_manager.set_user_online(False)
+                    print("✅ Пользователь установлен как оффлайн")
+                
+                # Сохраняем настройки
+                settings_manager.save_settings()
+                print("✅ Настройки сохранены")
+                
+                # Очищаем старые уведомления
+                if notification_system.is_initialized:
+                    notification_system.clear_old_notifications()
+                    print("✅ Старые уведомления очищены")
+                    
+            except Exception as e:
+                print(f"⚠️ Ошибка при завершении работы: {e}")
+            finally:
+                root.destroy()
+        
+        root.protocol("WM_DELETE_WINDOW", on_closing)
+        
+        # === СТАТУС ЗАПУСКА ===
+        def show_startup_status():
+            """Показать статус запуска в статусной строке"""
+            if hasattr(root, 'status_label'):
+                root.status_label.config(text="Приложение готово к работе")
+        
+        root.after(3000, show_startup_status)
+        
+    except Exception as e:
+        print(f"❌ Ошибка инициализации приложения: {e}")
+        messagebox.showerror("Ошибка", f"Не удалось инициализировать приложение: {e}")
 
 if __name__ == "__main__":
     main()
