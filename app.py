@@ -79,6 +79,7 @@ settings_manager = SettingsManager()
 auth_manager = None
 
 # ================== ФУНКЦИИ АУТЕНТИФИКАЦИИ ==================
+# ================== ФУНКЦИИ АУТЕНТИФИКАЦИИ ==================
 def show_login_window():
     """Окно входа в систему"""
     login_window = tk.Toplevel(root)
@@ -182,7 +183,7 @@ def show_login_window():
         
         if success:
             login_window.destroy()
-            initialize_application()
+            initialize_main_application()  # ИЗМЕНЕНИЕ: вызываем правильную функцию
             show_status_message(f"Добро пожаловать, {auth_manager.get_user_display_name()}!")
         else:
             messagebox.showerror("Ошибка входа", message)
@@ -204,10 +205,10 @@ def show_login_window():
     # Фокус на поле логина
     login_entry.focus()
     
-    # Если есть запомненный пользователь, закрываем окно входа
-    if auth_manager.current_user:
+    # Если есть запомненный пользователь, закрываем окно входа и инициализируем приложение
+    if auth_manager and hasattr(auth_manager, 'current_user') and auth_manager.current_user:
         login_window.destroy()
-        initialize_application()
+        initialize_main_application()  # ИЗМЕНЕНИЕ: вызываем правильную функцию
 
 def show_user_profile():
     """Окно профиля пользователя"""
@@ -1351,6 +1352,33 @@ def quick_view(client_id):
     messagebox.showinfo("Информация о клиенте", info_text)
 
 # ================== КОМПОНЕНТЫ ИНТЕРФЕЙСА ==================
+def create_modern_table(parent):
+    """Создание современной таблицы с клиентами"""
+    # Контейнер для таблицы с прокруткой
+    table_container = tk.Frame(parent, bg=ModernStyle.COLORS['background'])
+    table_container.pack(fill='both', expand=True, padx=20, pady=10)
+    
+    # Прокрутка
+    scrollbar = ttk.Scrollbar(table_container)
+    scrollbar.pack(side='right', fill='y')
+    
+    # Таблица
+    columns = ("✓", "ID", "Фамилия", "Имя", "Отчество", "Дата рождения", 
+               "Телефон", "Номер договора", "Дата начала ИППСУ", 
+               "Дата окончания ИППСУ", "Группа")
+    
+    tree = ttk.Treeview(table_container, columns=columns, show="headings", 
+                       style='Modern.Treeview', yscrollcommand=scrollbar.set,
+                       height=20)
+    tree.pack(side='left', fill='both', expand=True)
+    scrollbar.config(command=tree.yview)
+    
+    # Заголовки колонок
+    for col in columns:
+        tree.heading(col, text=col)
+    
+    return tree, table_container
+    
 def create_modern_header(root):
     """Создание современного заголовка"""
     header_frame = tk.Frame(root, bg=ModernStyle.COLORS['primary'], height=80)
@@ -1616,6 +1644,13 @@ def settings_window():
             justify='left').pack(anchor='w', pady=5)
 
 # ================== ГОРЯЧИЕ КЛАВИШИ ==================
+def setup_search_behavior():
+    """Настройка поведения поиска"""
+    def on_search_enter(event):
+        do_search()
+    
+    root.search_entry.bind('<Return>', on_search_enter)
+
 def setup_keyboard_shortcuts():
     """Настройка горячих клавиш"""
     
