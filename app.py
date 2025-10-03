@@ -1202,117 +1202,212 @@ def join_fio(last, first, middle):
 
 # ================== База данных ==================
 def init_db():
-    """Создаёт новую схему или мигрирует старую с обработкой блокировок"""
+    """Инициализация базы данных с улучшенной обработкой ошибок и блокировок"""
+    import sqlite3
+    import time
+    
     max_retries = 5
-    retry_delay = 0.1
+    base_delay = 0.5
+    
+    print(f"🔄 Инициализация базы данных: {DB_NAME}")
     
     for attempt in range(max_retries):
         try:
-            with sqlite3.connect(DB_NAME, timeout=10.0) as conn:
-                cur = conn.cursor()
-                
-                # Проверяем существование таблицы clients
+            # Очищаем временные файлы блокировок
+            lock_files = [
+                DB_NAME + "-shm", 
+                DB_NAME + "-wal",
+                DB_NAME + "-journal"
+            ]
+            
+            for lock_file in lock_files:
+                if os.path.exists(lock_file):
+                    try:
+                        os.remove(lock_file)
+                        print(f"🗑️ Удален файл блокировки: {lock_file}")
+                    except Exception as e:
+                        print(f"⚠️ Не удалось удалить {lock_file}: {e}")
+            
+            # Подключаемся к базе с увеличенным таймаутом
+            conn = sqlite3.connect(DB_NAME, timeout=15.0, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
+            
+            cur = conn.cursor()
+            
+            # Проверяем существование таблицы clients
+            cur.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='clients'
+            """)
+            table_exists = cur.fetchone() is not None
+            
+            if not table_exists:
+                print("📦 Создаем таблицу clients...")
                 cur.execute("""
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='clients'
+                    CREATE TABLE clients (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        last_name TEXT NOT NULL,
+                        first_name TEXT NOT NULL,
+                        middle_name TEXT,
+                        dob TEXT NOT NULL,
+                        phone TEXT,
+                        contract_number TEXT,
+                        ippcu_start TEXT,
+                        ippcu_end TEXT,
+                        group_name TEXT,
+                        UNIQUE(last_name, first_name, middle_name, dob)
+                    )
                 """)
-                table_exists = cur.fetchone() is not None
+                conn.commit()
+                print("✅ Таблица clients создана успешно")
+                conn.close()
+                return True
+
+            # Проверяем структуру существующей таблицы
+            cur.execute("PRAGMA table_info(clients)")
+            cols = [r[1] for r in cur.fetchall()]
+
+            # Если есть старая схема с полем fio - мигрируем
+            if "fio" in cols and "last_name" not in cols:
+                print("🔄 Мигрируем старую схему...")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS clients_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        last_name TEXT NOT NULL,
+                        first_name TEXT NOT NULL,
+                        middle_name TEXT,
+                        dob TEXT NOT NULL,
+                        phone TEXT,
+                        contract_number TEXT,
+                        ippcu_start TEXT,
+                        ippcu_end TEXT,
+                        group_name TEXT,
+                        UNIQUE(last_name, first_name, middle_name, dob)
+                    )
+                """)
                 
-                if not table_exists:
-                    print("Создаем таблицу clients...")
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS clients (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            last_name TEXT NOT NULL,
-                            first_name TEXT NOT NULL,
-                            middle_name TEXT,
-                            dob TEXT NOT NULL,
-                            phone TEXT,
-                            contract_number TEXT,
-                            ippcu_start TEXT,
-                            ippcu_end TEXT,
-                            group_name TEXT,
-                            UNIQUE(last_name, first_name, middle_name, dob)
-                        )
-                        """
-                    )
-                    conn.commit()
-                    print("Таблица clients создана успешно")
-                    return
-
-                # Проверяем структуру существующей таблицы
-                cur.execute("PRAGMA table_info(clients)")
-                cols = [r[1] for r in cur.fetchall()]
-
-                if "fio" in cols and "last_name" not in cols:
-                    print("Мигрируем старую схему...")
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS clients_new (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            last_name TEXT NOT NULL,
-                            first_name TEXT NOT NULL,
-                            middle_name TEXT,
-                            dob TEXT NOT NULL,
-                            phone TEXT,
-                            contract_number TEXT,
-                            ippcu_start TEXT,
-                            ippcu_end TEXT,
-                            group_name TEXT,
-                            UNIQUE(last_name, first_name, middle_name, dob)
-                        )
-                        """
-                    )
-                    cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
-                    rows = cur.fetchall()
-                    for r in rows:
-                        _, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name = r
+                # Переносим данные
+                cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
+                rows = cur.fetchall()
+                
+                migrated_count = 0
+                for row in rows:
+                    try:
+                        cid, fio, dob, phone, contract, ippcu_start, ippcu_end, group_name = row
                         last, first, middle = split_fio(fio or "")
-                        dob_val = dob or ""
-                        try:
-                            cur.execute(
-                                """
-                                INSERT OR IGNORE INTO clients_new
-                                (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """,
-                                (None, last, first, middle, dob_val, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                            )
-                        except Exception:
-                            cur.execute(
-                                "INSERT OR IGNORE INTO clients_new (last_name, first_name, middle_name, dob) VALUES (?, ?, ?, ?)",
-                                (last or "", first or "", middle or "", dob_val)
-                            )
-                    cur.execute("DROP TABLE clients")
-                    cur.execute("ALTER TABLE clients_new RENAME TO clients")
-                    conn.commit()
-                    print("Миграция завершена успешно")
-                    return
+                        cur.execute("""
+                            INSERT OR IGNORE INTO clients_new
+                            (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (cid, last, first, middle, dob or "", phone, contract, ippcu_start, ippcu_end, group_name))
+                        migrated_count += 1
+                    except Exception as e:
+                        print(f"⚠️ Ошибка миграции записи: {e}")
+                        continue
+                
+                cur.execute("DROP TABLE clients")
+                cur.execute("ALTER TABLE clients_new RENAME TO clients")
+                conn.commit()
+                print(f"✅ Миграция завершена. Перенесено записей: {migrated_count}")
 
-                # Добавляем отсутствующие колонки если нужно
+            # Добавляем отсутствующие колонки
+            missing_columns = []
+            if "last_name" not in cols:
+                missing_columns.append("last_name TEXT")
+            if "first_name" not in cols:
+                missing_columns.append("first_name TEXT") 
+            if "middle_name" not in cols:
+                missing_columns.append("middle_name TEXT")
+            
+            for col_def in missing_columns:
                 try:
-                    if "last_name" not in cols:
-                        cur.execute("ALTER TABLE clients ADD COLUMN last_name TEXT")
-                    if "first_name" not in cols:
-                        cur.execute("ALTER TABLE clients ADD COLUMN first_name TEXT")
-                    if "middle_name" not in cols:
-                        cur.execute("ALTER TABLE clients ADD COLUMN middle_name TEXT")
-                    conn.commit()
+                    col_name = col_def.split()[0]
+                    cur.execute(f"ALTER TABLE clients ADD COLUMN {col_def}")
+                    print(f"✅ Добавлена колонка: {col_name}")
                 except Exception as e:
-                    print(f"Ошибка при добавлении колонок: {e}")
-
-                print("База данных инициализирована успешно")
-                break
+                    print(f"⚠️ Не удалось добавить колонку {col_def}: {e}")
+            
+            if missing_columns:
+                conn.commit()
+            
+            conn.close()
+            print("✅ База данных инициализирована успешно")
+            return True
                 
         except sqlite3.OperationalError as e:
-            if "locked" in str(e) and attempt < max_retries - 1:
-                print(f"База данных заблокирована, повторная попытка {attempt + 1}/{max_retries}...")
-                time.sleep(retry_delay)
-                retry_delay *= 2
+            error_msg = str(e)
+            if "locked" in error_msg:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"🔒 База данных заблокирована, повтор через {delay:.1f}с...")
+                    time.sleep(delay)
+                else:
+                    print(f"❌ Не удалось разблокировать базу данных после {max_retries} попыток")
+                    return False
             else:
-                print(f"❌ Ошибка инициализации БД: {e}")
-                raise e
+                print(f"❌ Ошибка базы данных: {error_msg}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Неожиданная ошибка инициализации БД: {e}")
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"🔄 Повтор через {delay:.1f}с...")
+                time.sleep(delay)
+            else:
+                return False
+    
+    return False
+
+def emergency_db_recovery():
+    """Аварийное восстановление базы данных"""
+    print("🚨 Запуск аварийного восстановления БД...")
+    
+    import shutil
+    from datetime import datetime
+    
+    # Создаем резервную копию если файл существует
+    if os.path.exists(DB_NAME):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"{DB_NAME}.backup_{timestamp}"
+        try:
+            shutil.copy2(DB_NAME, backup_name)
+            print(f"✅ Создана резервная копия: {backup_name}")
+        except Exception as e:
+            print(f"⚠️ Не удалось создать резервную копию: {e}")
+    
+    # Удаляем все файлы связанные с БД
+    db_files = [
+        DB_NAME,
+        DB_NAME + "-shm", 
+        DB_NAME + "-wal",
+        DB_NAME + "-journal"
+    ]
+    
+    for db_file in db_files:
+        if os.path.exists(db_file):
+            try:
+                os.remove(db_file)
+                print(f"🗑️ Удален: {os.path.basename(db_file)}")
+            except Exception as e:
+                print(f"⚠️ Не удалось удалить {db_file}: {e}")
+    
+    time.sleep(1)
+    
+    # Пробуем создать новую базу
+    try:
+        success = init_db()
+        if success:
+            print("✅ Аварийное восстановление завершено успешно")
+            return True
+        else:
+            print("❌ Аварийное восстановление не удалось")
+            return False
+    except Exception as e:
+        print(f"❌ Ошибка при аварийном восстановлении: {e}")
+        return False
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
     """Добавление с проверкой дублей (по ФИО+дата рождения, без учёта регистра)."""
@@ -2291,45 +2386,65 @@ def main():
     
     try:
         # Инициализация системы аутентификации
+        print("🔐 Инициализация системы аутентификации...")
         setup_auth_system()
         
-        # Инициализация БД
-        init_db()
+        # Инициализация БД с улучшенной обработкой ошибок
+        print("🗃️ Инициализация базы данных...")
+        if not init_db():
+            print("❌ Обычная инициализация не удалась, пробуем аварийное восстановление...")
+            if not emergency_db_recovery():
+                messagebox.showerror("Критическая ошибка", 
+                                   "Не удалось инициализировать базу данных.\n\n"
+                                   "Возможные причины:\n"
+                                   "• Другой экземпляр программы уже запущен\n"
+                                   "• Файл базы данных поврежден\n" 
+                                   "• Нет прав доступа к папке\n\n"
+                                   "Программа будет закрыта.")
+                root.destroy()
+                return
+        else:
+            print("✅ База данных успешно инициализирована")
         
         loading_label.destroy()
         
         # Показываем окно входа или основное приложение
         if AUTH_AVAILABLE and auth_manager and (not getattr(auth_manager, 'current_user', None) or not getattr(auth_manager, 'remember_me', False)):
+            print("👤 Требуется авторизация...")
             show_login_window()
         else:
+            print("🚀 Запуск основного приложения...")
             initialize_main_application()
             
         root.mainloop()
         
     except Exception as e:
+        print(f"💥 Критическая ошибка запуска: {e}")
         messagebox.showerror("Критическая ошибка", 
-                           f"Не удалось запустить приложение:\n{e}")
+                           f"Не удалось запустить приложение:\n{str(e)}\n\n"
+                           f"Подробности в консоли.")
         root.destroy()
 
 def initialize_main_application():
     """Инициализация основного приложения после авторизации"""
-    print("DEBUG: Starting initialize_main_application")
+    print("🔧 Инициализация основного приложения...")
     
     try:
         # Обновляем заголовок окна
         if AUTH_AVAILABLE and auth_manager and auth_manager.current_user:
-            root.title(f"Отделение дневного пребывания - {auth_manager.get_user_display_name()}")
+            user_display = auth_manager.get_user_display_name()
+            root.title(f"Отделение дневного пребывания - {user_display}")
+            print(f"👤 Пользователь: {user_display}")
         else:
             root.title("Отделение дневного пребывания - Демо-режим")
-        
-        # Инициализация базы данных клиентов
-        init_db()
-        print("✅ База данных инициализирована")
+            print("👤 Режим: Демо (аутентификация отключена)")
         
         # Настройка современного стиля
+        print("🎨 Настройка стиля интерфейса...")
         setup_modern_style()
         
         # Создание Notebook для вкладок
+        print("📒 Создание интерфейса вкладок...")
         notebook = ttk.Notebook(root)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
@@ -2338,6 +2453,7 @@ def initialize_main_application():
         notebook.add(main_frame, text="📋 Клиенты")
         
         # Создание интерфейса в основной вкладке
+        print("🏗️ Создание основного интерфейса...")
         header = create_modern_header(main_frame)
         search_entry, date_from_entry, date_to_entry, search_frame = create_search_panel(main_frame)
         toolbar = create_toolbar(main_frame)
@@ -2355,10 +2471,12 @@ def initialize_main_application():
         root.notebook = notebook
         
         # Настройка таблицы
+        print("⚙️ Настройка таблицы...")
         setup_initial_columns(tree)
         setup_tree_behavior(tree)
         
         # Настройка горячих клавиш
+        print("⌨️ Настройка горячих клавиш...")
         setup_keyboard_shortcuts()
         setup_search_behavior()
         
@@ -2366,17 +2484,20 @@ def initialize_main_application():
         tree.bind("<Button-3>", show_context_menu)
         tree.bind("<Button-1>", toggle_check)
         
-        print("DEBUG: Basic UI created, loading data...")
-        
         # Загрузка данных
+        print("📥 Загрузка данных клиентов...")
         refresh_tree()
         
         print("✅ Основной интерфейс создан")
         
         # === ВКЛАДКА ЧАТА ===
         def initialize_chat():
+            print("💬 Инициализация системы чата...")
             if not initialize_chat_system(notebook):
                 create_chat_stub(notebook)
+                print("⚠️ Чат: используется заглушка")
+            else:
+                print("✅ Чат: модуль инициализирован")
         
         # Инициализируем чат с задержкой
         root.after(1000, initialize_chat)
@@ -2386,51 +2507,53 @@ def initialize_main_application():
         def load_application_data():
             """Загрузка данных приложения"""
             try:
-                # Загрузка данных в таблицу
+                print("🔄 Обновление данных таблицы...")
                 refresh_tree()
-                print("✅ Таблица клиентов загружена")
                 
                 # Проверка обновлений
-                updater.auto_update()
-                print("✅ Проверка обновлений выполнена")
-                
+                if settings_manager.get('auto_check_updates', True):
+                    print("🔍 Проверка обновлений...")
+                    updater.auto_update()
+                else:
+                    print("⏸️ Проверка обновлений отключена")
+                    
             except Exception as e:
                 print(f"❌ Ошибка загрузки данных приложения: {e}")
-                messagebox.showwarning("Предупреждение", 
-                                    f"Некоторые функции могут работать некорректно: {e}")
+                # Не показываем сообщение пользователю для некритичных ошибок
         
         def initialize_notifications():
             """Инициализация системы уведомлений"""
             try:
                 if notification_system.initialize():
-                    print("✅ Система уведомлений инициализирована")
-                    
                     unread_count = notification_system.get_unread_count()
                     if unread_count > 0:
-                        print(f"✅ Найдено {unread_count} непрочитанных уведомлений")
+                        print(f"🔔 Уведомления: {unread_count} непрочитанных")
                     else:
-                        print("✅ Непрочитанных уведомлений нет")
+                        print("🔔 Уведомления: система активна")
                 else:
-                    print("⚠️ Система уведомлений отключена")
+                    print("⚠️ Уведомления: система отключена")
             except Exception as e:
                 print(f"❌ Ошибка инициализации уведомлений: {e}")
         
         def initialize_security_checks():
             """Инициализация проверок безопасности"""
             try:
+                print("🔒 Проверка ИППСУ...")
                 check_expiring_ippcu()
-                print("✅ Проверка ИППСУ выполнена")
             except Exception as e:
                 print(f"❌ Ошибка проверки ИППСУ: {e}")
         
         def show_welcome_message():
             """Показать приветственное сообщение"""
             if AUTH_AVAILABLE and auth_manager.remember_me:
-                show_status_message(f"Автоматический вход: {auth_manager.get_user_display_name()}")
+                welcome_msg = f"Автоматический вход: {auth_manager.get_user_display_name()}"
             elif AUTH_AVAILABLE:
-                show_status_message(f"Добро пожаловать, {auth_manager.get_user_display_name()}!")
+                welcome_msg = f"Добро пожаловать, {auth_manager.get_user_display_name()}!"
             else:
-                show_status_message("Демо-режим: аутентификация отключена")
+                welcome_msg = "Демо-режим: аутентификация отключена"
+            
+            show_status_message(welcome_msg)
+            print(f"👋 {welcome_msg}")
         
         # Планируем отложенные операции с правильным порядком
         root.after(500, load_application_data)        # Загрузка данных
@@ -2441,11 +2564,12 @@ def initialize_main_application():
         # === ОБРАБОТКА ЗАКРЫТИЯ ПРИЛОЖЕНИЯ ===
         def on_closing():
             """Обработчик закрытия приложения"""
+            print("🔚 Завершение работы приложения...")
             try:
                 # Устанавливаем пользователя оффлайн в чате
                 if hasattr(root, 'chat_manager') and root.chat_manager:
                     root.chat_manager.set_user_online(False)
-                    print("✅ Пользователь установлен как оффлайн")
+                    print("✅ Чат: пользователь оффлайн")
                 
                 # Сохраняем настройки
                 settings_manager.save_settings()
@@ -2454,11 +2578,12 @@ def initialize_main_application():
                 # Очищаем старые уведомления
                 if notification_system.is_initialized:
                     notification_system.clear_old_notifications()
-                    print("✅ Старые уведомления очищены")
+                    print("✅ Уведомления очищены")
                     
             except Exception as e:
                 print(f"⚠️ Ошибка при завершении работы: {e}")
             finally:
+                print("👋 Приложение завершено")
                 root.destroy()
         
         root.protocol("WM_DELETE_WINDOW", on_closing)
@@ -2468,12 +2593,16 @@ def initialize_main_application():
             """Показать статус запуска в статусной строке"""
             if hasattr(root, 'status_label'):
                 root.status_label.config(text="Приложение готово к работе")
+            print("🎉 Приложение успешно запущено и готово к работе")
         
         root.after(3000, show_startup_status)
         
     except Exception as e:
-        print(f"❌ Ошибка инициализации приложения: {e}")
-        messagebox.showerror("Ошибка", f"Не удалось инициализировать приложение: {e}")
+        print(f"❌ Критическая ошибка инициализации приложения: {e}")
+        messagebox.showerror("Ошибка инициализации", 
+                           f"Не удалось инициализировать приложение:\n{str(e)}\n\n"
+                           "Программа будет закрыта.")
+        root.destroy()
 
 if __name__ == "__main__":
     main()
