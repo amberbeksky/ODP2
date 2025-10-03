@@ -13,8 +13,13 @@ import updater
 from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from tkinter import simpledialog
 import time
+import requests
+import threading
+from datetime import datetime
 
 # ================== Пути ==================
 APP_DIR = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "MyApp")
@@ -43,7 +48,8 @@ class SettingsManager:
             'default_export_path': os.path.join(os.path.expanduser("~"), "Desktop"),
             'auto_check_updates': True,
             'show_notifications': True,
-            'theme': 'modern'
+            'theme': 'modern',
+            'chat_server_url': 'http://localhost:5000'  # URL для чата
         }
         
         try:
@@ -209,6 +215,15 @@ def export_selected_to_word():
 
     doc = Document()
 
+    # Убираем автоматические разрывы страниц
+    section = doc.sections[0]
+    section.page_height = Cm(29.7)  # A4 height
+    section.page_width = Cm(21.0)   # A4 width
+    section.left_margin = Cm(2)
+    section.right_margin = Cm(2)
+    section.top_margin = Cm(2)
+    section.bottom_margin = Cm(2)
+
     heading = doc.add_paragraph(f"{shift_name} {date_range}")
     heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
     run = heading.runs[0]
@@ -227,13 +242,16 @@ def export_selected_to_word():
         p = doc.add_paragraph(f"{i}. {fio} – {dob} г.р.")
         p.runs[0].font.size = Pt(12)
 
-    spacer = doc.add_paragraph("\n")
-    spacer.paragraph_format.space_after = Pt(300)
+    # Убираем большой отступ и добавляем небольшой пробел
+    doc.add_paragraph("\n")
 
     total = len(selected_items)
     total_p = doc.add_paragraph(f"Итого: {total} человек")
     total_p.runs[0].bold = True
     total_p.runs[0].font.size = Pt(12)
+
+    # Добавляем подпись сразу после итогов
+    doc.add_paragraph("\n")
 
     podpis = doc.add_paragraph()
     podpis.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
@@ -246,6 +264,11 @@ def export_selected_to_word():
 
     run_name = podpis.add_run("Дурандина А.В.")
     run_name.font.size = Pt(12)
+
+    # Отключаем автоматические разрывы страниц для всего документа
+    for paragraph in doc.paragraphs:
+        paragraph.paragraph_format.keep_together = True
+        paragraph.paragraph_format.keep_with_next = True
 
     # Используем путь из настроек или рабочий стол по умолчанию
     export_path = settings_manager.get('default_export_path', os.path.join(os.path.expanduser("~"), "Desktop"))
@@ -1202,164 +1225,142 @@ def join_fio(last, first, middle):
 
 # ================== База данных ==================
 def init_db():
-    """Инициализация базы данных с улучшенной обработкой ошибок и блокировок"""
+    """Инициализация базы данных без блокировок"""
     import sqlite3
-    import time
-    
-    max_retries = 5
-    base_delay = 0.5
     
     print(f"🔄 Инициализация базы данных: {DB_NAME}")
     
-    for attempt in range(max_retries):
-        try:
-            # Очищаем временные файлы блокировок
-            lock_files = [
-                DB_NAME + "-shm", 
-                DB_NAME + "-wal",
-                DB_NAME + "-journal"
-            ]
-            
-            for lock_file in lock_files:
-                if os.path.exists(lock_file):
-                    try:
-                        os.remove(lock_file)
-                        print(f"🗑️ Удален файл блокировки: {lock_file}")
-                    except Exception as e:
-                        print(f"⚠️ Не удалось удалить {lock_file}: {e}")
-            
-            # Подключаемся к базе с увеличенным таймаутом
-            conn = sqlite3.connect(DB_NAME, timeout=15.0, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA foreign_keys=ON")
-            
-            cur = conn.cursor()
-            
-            # Проверяем существование таблицы clients
-            cur.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='clients'
-            """)
-            table_exists = cur.fetchone() is not None
-            
-            if not table_exists:
-                print("📦 Создаем таблицу clients...")
-                cur.execute("""
-                    CREATE TABLE clients (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        last_name TEXT NOT NULL,
-                        first_name TEXT NOT NULL,
-                        middle_name TEXT,
-                        dob TEXT NOT NULL,
-                        phone TEXT,
-                        contract_number TEXT,
-                        ippcu_start TEXT,
-                        ippcu_end TEXT,
-                        group_name TEXT,
-                        UNIQUE(last_name, first_name, middle_name, dob)
-                    )
-                """)
-                conn.commit()
-                print("✅ Таблица clients создана успешно")
-                conn.close()
-                return True
-
-            # Проверяем структуру существующей таблицы
-            cur.execute("PRAGMA table_info(clients)")
-            cols = [r[1] for r in cur.fetchall()]
-
-            # Если есть старая схема с полем fio - мигрируем
-            if "fio" in cols and "last_name" not in cols:
-                print("🔄 Мигрируем старую схему...")
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS clients_new (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        last_name TEXT NOT NULL,
-                        first_name TEXT NOT NULL,
-                        middle_name TEXT,
-                        dob TEXT NOT NULL,
-                        phone TEXT,
-                        contract_number TEXT,
-                        ippcu_start TEXT,
-                        ippcu_end TEXT,
-                        group_name TEXT,
-                        UNIQUE(last_name, first_name, middle_name, dob)
-                    )
-                """)
-                
-                # Переносим данные
-                cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
-                rows = cur.fetchall()
-                
-                migrated_count = 0
-                for row in rows:
-                    try:
-                        cid, fio, dob, phone, contract, ippcu_start, ippcu_end, group_name = row
-                        last, first, middle = split_fio(fio or "")
-                        cur.execute("""
-                            INSERT OR IGNORE INTO clients_new
-                            (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (cid, last, first, middle, dob or "", phone, contract, ippcu_start, ippcu_end, group_name))
-                        migrated_count += 1
-                    except Exception as e:
-                        print(f"⚠️ Ошибка миграции записи: {e}")
-                        continue
-                
-                cur.execute("DROP TABLE clients")
-                cur.execute("ALTER TABLE clients_new RENAME TO clients")
-                conn.commit()
-                print(f"✅ Миграция завершена. Перенесено записей: {migrated_count}")
-
-            # Добавляем отсутствующие колонки
-            missing_columns = []
-            if "last_name" not in cols:
-                missing_columns.append("last_name TEXT")
-            if "first_name" not in cols:
-                missing_columns.append("first_name TEXT") 
-            if "middle_name" not in cols:
-                missing_columns.append("middle_name TEXT")
-            
-            for col_def in missing_columns:
+    try:
+        # Удаляем все возможные файлы блокировок
+        lock_files = [
+            DB_NAME + "-shm", 
+            DB_NAME + "-wal",
+            DB_NAME + "-journal"
+        ]
+        
+        for lock_file in lock_files:
+            if os.path.exists(lock_file):
                 try:
-                    col_name = col_def.split()[0]
-                    cur.execute(f"ALTER TABLE clients ADD COLUMN {col_def}")
-                    print(f"✅ Добавлена колонка: {col_name}")
+                    os.remove(lock_file)
+                    print(f"🗑️ Удален файл блокировки: {lock_file}")
                 except Exception as e:
-                    print(f"⚠️ Не удалось добавить колонку {col_def}: {e}")
-            
-            if missing_columns:
-                conn.commit()
-            
+                    print(f"⚠️ Не удалось удалить {lock_file}: {e}")
+        
+        # Подключаемся к базе с настройками, исключающими блокировки
+        conn = sqlite3.connect(DB_NAME, timeout=30.0, check_same_thread=False)
+        
+        # Отключаем WAL mode (может вызывать блокировки)
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute("PRAGMA locking_mode=NORMAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=10000")
+        
+        cur = conn.cursor()
+        
+        # Проверяем существование таблицы clients
+        cur.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='clients'
+        """)
+        table_exists = cur.fetchone() is not None
+        
+        if not table_exists:
+            print("📦 Создаем таблицу clients...")
+            cur.execute("""
+                CREATE TABLE clients (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    last_name TEXT NOT NULL,
+                    first_name TEXT NOT NULL,
+                    middle_name TEXT,
+                    dob TEXT NOT NULL,
+                    phone TEXT,
+                    contract_number TEXT,
+                    ippcu_start TEXT,
+                    ippcu_end TEXT,
+                    group_name TEXT,
+                    UNIQUE(last_name, first_name, middle_name, dob)
+                )
+            """)
+            conn.commit()
+            print("✅ Таблица clients создана успешно")
             conn.close()
-            print("✅ База данных инициализирована успешно")
             return True
-                
-        except sqlite3.OperationalError as e:
-            error_msg = str(e)
-            if "locked" in error_msg:
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    print(f"🔒 База данных заблокирована, повтор через {delay:.1f}с...")
-                    time.sleep(delay)
-                else:
-                    print(f"❌ Не удалось разблокировать базу данных после {max_retries} попыток")
-                    return False
-            else:
-                print(f"❌ Ошибка базы данных: {error_msg}")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Неожиданная ошибка инициализации БД: {e}")
-            if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)
-                print(f"🔄 Повтор через {delay:.1f}с...")
-                time.sleep(delay)
-            else:
-                return False
-    
-    return False
+
+        # Проверяем структуру существующей таблицы
+        cur.execute("PRAGMA table_info(clients)")
+        cols = [r[1] for r in cur.fetchall()]
+
+        # Если есть старая схема с полем fio - мигрируем
+        if "fio" in cols and "last_name" not in cols:
+            print("🔄 Мигрируем старую схему...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clients_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    last_name TEXT NOT NULL,
+                    first_name TEXT NOT NULL,
+                    middle_name TEXT,
+                    dob TEXT NOT NULL,
+                    phone TEXT,
+                    contract_number TEXT,
+                    ippcu_start TEXT,
+                    ippcu_end TEXT,
+                    group_name TEXT,
+                    UNIQUE(last_name, first_name, middle_name, dob)
+                )
+            """)
+            
+            # Переносим данные
+            cur.execute("SELECT id, fio, dob, phone, contract_number, ippcu_start, ippcu_end, group_name FROM clients")
+            rows = cur.fetchall()
+            
+            migrated_count = 0
+            for row in rows:
+                try:
+                    cid, fio, dob, phone, contract, ippcu_start, ippcu_end, group_name = row
+                    last, first, middle = split_fio(fio or "")
+                    cur.execute("""
+                        INSERT OR IGNORE INTO clients_new
+                        (id, last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group_name)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (cid, last, first, middle, dob or "", phone, contract, ippcu_start, ippcu_end, group_name))
+                    migrated_count += 1
+                except Exception as e:
+                    print(f"⚠️ Ошибка миграции записи: {e}")
+                    continue
+            
+            cur.execute("DROP TABLE clients")
+            cur.execute("ALTER TABLE clients_new RENAME TO clients")
+            conn.commit()
+            print(f"✅ Миграция завершена. Перенесено записей: {migrated_count}")
+
+        # Добавляем отсутствующие колонки
+        missing_columns = []
+        if "last_name" not in cols:
+            missing_columns.append("last_name TEXT DEFAULT ''")
+        if "first_name" not in cols:
+            missing_columns.append("first_name TEXT DEFAULT ''") 
+        if "middle_name" not in cols:
+            missing_columns.append("middle_name TEXT DEFAULT ''")
+        
+        for col_def in missing_columns:
+            try:
+                col_name = col_def.split()[0]
+                cur.execute(f"ALTER TABLE clients ADD COLUMN {col_def}")
+                print(f"✅ Добавлена колонка: {col_name}")
+            except Exception as e:
+                print(f"⚠️ Не удалось добавить колонку {col_def}: {e}")
+        
+        if missing_columns:
+            conn.commit()
+        
+        conn.close()
+        print("✅ База данных инициализирована успешно")
+        return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка инициализации БД: {e}")
+        # Пробуем аварийное восстановление
+        return emergency_db_recovery()
 
 def emergency_db_recovery():
     """Аварийное восстановление базы данных"""
@@ -1394,19 +1395,65 @@ def emergency_db_recovery():
             except Exception as e:
                 print(f"⚠️ Не удалось удалить {db_file}: {e}")
     
-    time.sleep(1)
-    
-    # Пробуем создать новую базу
+    # Создаем новую базу
     try:
-        success = init_db()
-        if success:
-            print("✅ Аварийное восстановление завершено успешно")
-            return True
-        else:
-            print("❌ Аварийное восстановление не удалось")
-            return False
+        import sqlite3
+        conn = sqlite3.connect(DB_NAME, timeout=30.0, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute("PRAGMA locking_mode=NORMAL")
+        
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                last_name TEXT NOT NULL,
+                first_name TEXT NOT NULL,
+                middle_name TEXT,
+                dob TEXT NOT NULL,
+                phone TEXT,
+                contract_number TEXT,
+                ippcu_start TEXT,
+                ippcu_end TEXT,
+                group_name TEXT,
+                UNIQUE(last_name, first_name, middle_name, dob)
+            )
+        """)
+        conn.commit()
+        conn.close()
+        
+        print("✅ Аварийное восстановление завершено успешно")
+        return True
+        
     except Exception as e:
         print(f"❌ Ошибка при аварийном восстановлении: {e}")
+        return False
+
+def create_minimal_db():
+    """Создает минимальную рабочую базу данных"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect(DB_NAME, timeout=30.0, check_same_thread=False)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                last_name TEXT,
+                first_name TEXT,
+                middle_name TEXT,
+                dob TEXT,
+                phone TEXT,
+                contract_number TEXT,
+                ippcu_start TEXT,
+                ippcu_end TEXT,
+                group_name TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+        print("✅ Минимальная база данных создана")
+        return True
+    except Exception as e:
+        print(f"❌ Не удалось создать минимальную базу: {e}")
         return False
 
 def add_client(last_name, first_name, middle_name, dob, phone, contract_number, ippcu_start, ippcu_end, group):
@@ -1541,6 +1588,231 @@ def import_from_gsheet():
     except Exception as e:
         traceback.print_exc()
         messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{e}")
+
+# ================== СИСТЕМА ЧАТА ==================
+class ChatManager:
+    def __init__(self):
+        self.server_url = settings_manager.get('chat_server_url', 'http://localhost:5000')
+        self.current_user = None
+        self.messages = []
+        self.last_update = datetime.now()
+        
+    def set_current_user(self, user_info):
+        """Установить текущего пользователя для чата"""
+        self.current_user = user_info
+        
+    def send_message(self, message_text):
+        """Отправить сообщение в чат"""
+        if not self.current_user:
+            return False, "Пользователь не авторизован"
+            
+        try:
+            response = requests.post(f"{self.server_url}/send_message", json={
+                'user': self.current_user['full_name'],
+                'message': message_text,
+                'timestamp': datetime.now().isoformat()
+            }, timeout=5)
+            
+            if response.status_code == 200:
+                return True, "Сообщение отправлено"
+            else:
+                return False, f"Ошибка сервера: {response.status_code}"
+                
+        except requests.exceptions.RequestException as e:
+            return False, f"Не удалось подключиться к серверу чата: {e}"
+            
+    def get_messages(self):
+        """Получить новые сообщения"""
+        try:
+            response = requests.get(f"{self.server_url}/get_messages", 
+                                  params={'since': self.last_update.isoformat()},
+                                  timeout=5)
+            
+            if response.status_code == 200:
+                new_messages = response.json()
+                if new_messages:
+                    self.messages.extend(new_messages)
+                    self.last_update = datetime.now()
+                return new_messages
+            else:
+                return []
+                
+        except requests.exceptions.RequestException:
+            return []
+            
+    def get_all_messages(self):
+        """Получить все сообщения"""
+        try:
+            response = requests.get(f"{self.server_url}/get_messages", timeout=5)
+            if response.status_code == 200:
+                self.messages = response.json()
+                if self.messages:
+                    self.last_update = datetime.fromisoformat(self.messages[-1]['timestamp'])
+                return self.messages
+            else:
+                return []
+        except requests.exceptions.RequestException:
+            return []
+
+class ChatUI:
+    def __init__(self, parent, chat_manager, colors, fonts):
+        self.chat_manager = chat_manager
+        self.colors = colors
+        self.fonts = fonts
+        self.unread_count = 0
+        
+        # Создаем фрейм для чата
+        self.frame = tk.Frame(parent, bg=colors['background'])
+        
+        # Заголовок чата
+        header_frame = tk.Frame(self.frame, bg=colors['primary'], height=40)
+        header_frame.pack(fill='x', padx=0, pady=0)
+        header_frame.pack_propagate(False)
+        
+        self.title_label = tk.Label(header_frame, text="💬 Чат сотрудников", 
+                                  bg=colors['primary'], fg='white', font=fonts['h3'])
+        self.title_label.pack(pady=8)
+        
+        # Область сообщений
+        messages_frame = tk.Frame(self.frame, bg=colors['background'])
+        messages_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Прокрутка для сообщений
+        scrollbar = ttk.Scrollbar(messages_frame)
+        scrollbar.pack(side='right', fill='y')
+        
+        self.messages_text = tk.Text(messages_frame, wrap='word', 
+                                   yscrollcommand=scrollbar.set,
+                                   bg=colors['surface'], fg=colors['text_primary'],
+                                   font=fonts['small'], state='disabled',
+                                   padx=10, pady=10)
+        self.messages_text.pack(side='left', fill='both', expand=True)
+        scrollbar.config(command=self.messages_text.yview)
+        
+        # Поле ввода сообщения
+        input_frame = tk.Frame(self.frame, bg=colors['background'], padx=10, pady=10)
+        input_frame.pack(fill='x')
+        
+        self.message_entry = tk.Entry(input_frame, font=fonts['body'])
+        self.message_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        self.message_entry.bind('<Return>', self.send_message)
+        
+        send_btn = ttk.Button(input_frame, text="Отправить", 
+                            style='Primary.TButton',
+                            command=self.send_message)
+        send_btn.pack(side='right')
+        
+        # Кнопка обновления
+        refresh_btn = ttk.Button(input_frame, text="🔄", 
+                               style='Secondary.TButton',
+                               command=self.refresh_chat)
+        refresh_btn.pack(side='right', padx=(0, 10))
+        
+        # Загружаем сообщения при инициализации
+        self.refresh_chat()
+        
+    def get_widget(self):
+        return self.frame
+        
+    def send_message(self, event=None):
+        """Отправить сообщение"""
+        message_text = self.message_entry.get().strip()
+        if not message_text:
+            return
+            
+        success, result = self.chat_manager.send_message(message_text)
+        if success:
+            self.message_entry.delete(0, tk.END)
+            self.refresh_chat()
+        else:
+            messagebox.showerror("Ошибка", result)
+            
+    def refresh_chat(self):
+        """Обновить сообщения в чате"""
+        messages = self.chat_manager.get_all_messages()
+        self.messages_text.config(state='normal')
+        self.messages_text.delete(1.0, tk.END)
+        
+        for msg in messages:
+            timestamp = datetime.fromisoformat(msg['timestamp']).strftime("%H:%M")
+            user = msg['user']
+            message = msg['message']
+            
+            # Форматируем сообщение
+            formatted_msg = f"[{timestamp}] {user}: {message}\n\n"
+            self.messages_text.insert(tk.END, formatted_msg)
+            
+        self.messages_text.see(tk.END)
+        self.messages_text.config(state='disabled')
+        self.unread_count = 0
+        self.update_unread_count()
+        
+    def update_unread_count(self):
+        """Обновить счетчик непрочитанных сообщений"""
+        if hasattr(self, 'title_label'):
+            if self.unread_count > 0:
+                self.title_label.config(text=f"💬 Чат сотрудников ({self.unread_count})")
+            else:
+                self.title_label.config(text="💬 Чат сотрудников")
+
+def initialize_chat_system(notebook):
+    """Инициализация системы чата"""
+    try:
+        chat_manager = ChatManager()
+        
+        # Устанавливаем текущего пользователя если есть
+        if auth_manager and auth_manager.current_user:
+            chat_manager.set_current_user(auth_manager.current_user)
+        
+        # Создание UI чата
+        chat_ui = ChatUI(notebook, chat_manager, ModernStyle.COLORS, ModernStyle.FONTS)
+        chat_frame = chat_ui.get_widget()
+        notebook.add(chat_frame, text="💬 Чат сотрудников")
+        
+        # Сохраняем ссылки для доступа из других функций
+        root.chat_manager = chat_manager
+        root.chat_ui = chat_ui
+        
+        # Функция периодического обновления чата
+        def update_chat_periodically():
+            if hasattr(root, 'chat_ui') and root.chat_ui:
+                try:
+                    # Получаем новые сообщения
+                    new_messages = root.chat_manager.get_messages()
+                    if new_messages:
+                        # Если есть новые сообщения и чат не в фокусе, увеличиваем счетчик
+                        current_tab = notebook.index(notebook.select())
+                        chat_tab_index = notebook.index("end") - 1  # Предполагаем, что чат последний
+                        if current_tab != chat_tab_index:
+                            root.chat_ui.unread_count += len(new_messages)
+                            root.chat_ui.update_unread_count()
+                        
+                        # Обновляем отображение
+                        root.chat_ui.refresh_chat()
+                except Exception as e:
+                    print(f"Ошибка обновления чата: {e}")
+            root.after(5000, update_chat_periodically)  # Обновлять каждые 5 секунд
+        
+        root.after(3000, update_chat_periodically)
+        print("✅ Модуль чата инициализирован")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Ошибка инициализации чата: {e}")
+        return False
+
+def create_chat_stub(notebook):
+    """Создание заглушки для чата"""
+    chat_stub_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
+    notebook.add(chat_stub_frame, text="💬 Чат (недоступен)")
+    
+    stub_label = tk.Label(chat_stub_frame, 
+                        text="Модуль чата не установлен\n\nДля использования чата установите необходимые зависимости",
+                        bg=ModernStyle.COLORS['background'],
+                        fg=ModernStyle.COLORS['text_secondary'],
+                        font=ModernStyle.FONTS['h3'],
+                        justify='center')
+    stub_label.pack(expand=True, fill='both', padx=20, pady=20)
 
 # ================== КОМПОНЕНТЫ ИНТЕРФЕЙСА ==================
 def create_modern_table(parent):
@@ -1813,6 +2085,20 @@ def settings_window():
                                    style='Modern.TCheckbutton')
     updates_check.pack(anchor='w', pady=(5, 0))
     
+    # Настройки чата
+    chat_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
+    chat_frame.pack(fill='x', pady=10)
+    
+    tk.Label(chat_frame, text="URL сервера чата:",
+            bg=ModernStyle.COLORS['background'],
+            fg=ModernStyle.COLORS['text_primary'],
+            font=ModernStyle.FONTS['body']).pack(anchor='w')
+    
+    chat_url_var = tk.StringVar(value=settings_manager.get('chat_server_url', 'http://localhost:5000'))
+    chat_entry = tk.Entry(chat_frame, textvariable=chat_url_var, 
+                         font=ModernStyle.FONTS['body'], width=40)
+    chat_entry.pack(fill='x', pady=5)
+    
     # Кнопки сохранения/отмены
     button_frame = tk.Frame(content_frame, bg=ModernStyle.COLORS['background'])
     button_frame.pack(fill='x', pady=20)
@@ -1821,6 +2107,7 @@ def settings_window():
         settings_manager.set('default_export_path', export_path_var.get())
         settings_manager.set('show_notifications', show_notifications_var.get())
         settings_manager.set('auto_check_updates', auto_updates_var.get())
+        settings_manager.set('chat_server_url', chat_url_var.get())
         messagebox.showinfo("Настройки", "Настройки успешно сохранены!")
         settings_win.destroy()
     
@@ -2309,64 +2596,6 @@ def toggle_check(event):
     if hasattr(root, 'update_word_count'):
         root.update_word_count()
 
-# ================== ЧАТ СИСТЕМА ==================
-def initialize_chat_system(notebook):
-    """Инициализация системы чата"""
-    try:
-        from chat_manager import ChatManager
-        from chat_ui import ChatUI
-        from chat_notifications import ChatNotifications
-        
-        # Инициализация чата
-        chat_manager = ChatManager()
-        chat_notifications = ChatNotifications(chat_manager)
-        
-        # Создание UI чата
-        chat_ui = ChatUI(notebook, chat_manager, ModernStyle.COLORS, ModernStyle.FONTS)
-        chat_frame = chat_ui.get_widget()
-        notebook.add(chat_frame, text="💬 Чат сотрудников")
-        
-        # Сохраняем ссылки для доступа из других функций
-        root.chat_manager = chat_manager
-        root.chat_ui = chat_ui
-        root.chat_notifications = chat_notifications
-        
-        # Функция периодического обновления чата
-        def update_chat_periodically():
-            if hasattr(root, 'chat_ui') and root.chat_ui:
-                try:
-                    root.chat_ui.refresh_chat()
-                    root.chat_ui.update_unread_count()
-                except Exception as e:
-                    print(f"Ошибка обновления чата: {e}")
-            root.after(30000, update_chat_periodically)
-        
-        root.after(5000, update_chat_periodically)
-        root.after(4000, lambda: chat_manager.set_user_online(True))
-        
-        print("✅ Модуль чата инициализирован")
-        return True
-        
-    except ImportError as e:
-        print(f"❌ Модули чата не найдены: {e}")
-        return False
-    except Exception as e:
-        print(f"❌ Ошибка инициализации чата: {e}")
-        return False
-
-def create_chat_stub(notebook):
-    """Создание заглушки для чата"""
-    chat_stub_frame = tk.Frame(notebook, bg=ModernStyle.COLORS['background'])
-    notebook.add(chat_stub_frame, text="💬 Чат (недоступен)")
-    
-    stub_label = tk.Label(chat_stub_frame, 
-                        text="Модуль чата не установлен\n\nДля использования чата установите необходимые зависимости",
-                        bg=ModernStyle.COLORS['background'],
-                        fg=ModernStyle.COLORS['text_secondary'],
-                        font=ModernStyle.FONTS['h3'],
-                        justify='center')
-    stub_label.pack(expand=True, fill='both', padx=20, pady=20)
-
 # ================== MAIN ==================
 def main():
     global root, tree, auth_manager
@@ -2385,45 +2614,38 @@ def main():
     root.update()
     
     try:
-        # Инициализация системы аутентификации
-        print("🔐 Инициализация системы аутентификации...")
-        setup_auth_system()
-        
-        # Инициализация БД с улучшенной обработкой ошибок
+        # СНАЧАЛА инициализируем БД, ПОТОМ аутентификацию
         print("🗃️ Инициализация базы данных...")
         if not init_db():
             print("❌ Обычная инициализация не удалась, пробуем аварийное восстановление...")
             if not emergency_db_recovery():
-                messagebox.showerror("Критическая ошибка", 
-                                   "Не удалось инициализировать базу данных.\n\n"
-                                   "Возможные причины:\n"
-                                   "• Другой экземпляр программы уже запущен\n"
-                                   "• Файл базы данных поврежден\n" 
-                                   "• Нет прав доступа к папке\n\n"
-                                   "Программа будет закрыта.")
-                root.destroy()
-                return
-        else:
-            print("✅ База данных успешно инициализирована")
+                # Если даже аварийное восстановление не помогло, создаем простую базу
+                print("⚠️ Создаем минимальную базу данных...")
+                create_minimal_db()
+        
+        # Инициализация системы аутентификации
+        print("🔐 Инициализация системы аутентификации...")
+        setup_auth_system()
         
         loading_label.destroy()
         
-        # Показываем окно входа или основное приложение
-        if AUTH_AVAILABLE and auth_manager and (not getattr(auth_manager, 'current_user', None) or not getattr(auth_manager, 'remember_me', False)):
-            print("👤 Требуется авторизация...")
-            show_login_window()
-        else:
-            print("🚀 Запуск основного приложения...")
-            initialize_main_application()
+        # Всегда показываем окно входа для простоты
+        print("👤 Запуск окна авторизации...")
+        show_login_window()
             
         root.mainloop()
         
     except Exception as e:
         print(f"💥 Критическая ошибка запуска: {e}")
-        messagebox.showerror("Критическая ошибка", 
-                           f"Не удалось запустить приложение:\n{str(e)}\n\n"
-                           f"Подробности в консоли.")
-        root.destroy()
+        # Пробуем запустить в демо-режиме
+        try:
+            loading_label.destroy()
+            messagebox.showwarning("Предупреждение", 
+                                f"Приложение запущено в демо-режиме из-за ошибки:\n{e}")
+            initialize_main_application()
+            root.mainloop()
+        except:
+            root.destroy()
 
 def initialize_main_application():
     """Инициализация основного приложения после авторизации"""
@@ -2566,11 +2788,6 @@ def initialize_main_application():
             """Обработчик закрытия приложения"""
             print("🔚 Завершение работы приложения...")
             try:
-                # Устанавливаем пользователя оффлайн в чате
-                if hasattr(root, 'chat_manager') and root.chat_manager:
-                    root.chat_manager.set_user_online(False)
-                    print("✅ Чат: пользователь оффлайн")
-                
                 # Сохраняем настройки
                 settings_manager.save_settings()
                 print("✅ Настройки сохранены")
